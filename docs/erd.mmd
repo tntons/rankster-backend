@@ -1,0 +1,187 @@
+erDiagram
+  User ||--|| UserProfile : has
+  User ||--|| UserAuth : has
+  User ||--|| UserStats : has
+  User ||--o{ Subscription : subscribes
+  User ||--o{ Follow : follower
+  User ||--o{ Follow : following
+  User ||--o{ Post : creates
+  User ||--o{ PinnedPost : pins
+  User ||--o{ Comment : writes
+  User ||--o{ PostLike : likes
+  User ||--o{ PostShare : shares
+
+  Organization ||--o{ SurveyCampaign : sponsors
+  Organization ||--o{ SurveyPost : owns
+
+  Category ||--o{ TierListTemplate : templates
+  TierListTemplate ||--o{ TierDefinition : defines
+
+  Category ||--o{ Post : categorizes
+  Post ||--|| PostMetrics : has
+  Post ||--o| RankPost : is
+  Post ||--o| SurveyPost : is
+
+  RankPost ||--|| Asset : image
+
+  SurveyPost ||--o{ SurveyQuestion : asks
+  SurveyQuestion ||--o{ SurveyOption : has
+  SurveyPost ||--o{ SurveyResponse : receives
+  SurveyResponse ||--o{ SurveyAnswer : includes
+
+  SurveyCampaign ||--o{ SurveyImpression : serves
+
+  Category ||--o{ CategoryOverallReview : summarizes
+  Category ||--o{ LeaderboardSnapshot : snapshots
+  LeaderboardSnapshot ||--o{ LeaderboardEntry : contains
+
+  User {
+    string id PK
+    datetime createdAt
+  }
+
+  UserAuth {
+    string id PK
+    string userId FK
+    string provider
+    string email
+  }
+
+  UserProfile {
+    string id PK
+    string userId FK
+    string username
+  }
+
+  Follow {
+    string id PK
+    string followerId FK
+    string followingId FK
+    datetime createdAt
+  }
+
+  Category {
+    string id PK
+    string slug
+    string name
+  }
+
+  TierListTemplate {
+    string id PK
+    string categoryId FK
+    string creatorId FK
+    boolean isMaster
+    string visibility
+  }
+
+  TierDefinition {
+    string id PK
+    string templateId FK
+    string key
+    int order
+  }
+
+  Post {
+    string id PK
+    string creatorId FK
+    string categoryId FK
+    string type
+    datetime createdAt
+  }
+
+  RankPost {
+    string postId PK, FK
+    string templateId FK
+    string tierKey
+    string imageAssetId FK
+  }
+
+  SurveyPost {
+    string postId PK, FK
+    string surveyType
+    string sponsorOrgId FK
+  }
+
+  PostMetrics {
+    string postId PK, FK
+    int likeCount
+    int commentCount
+    int shareCount
+    float hotScore
+  }
+
+  Comment {
+    string id PK
+    string postId FK
+    string authorId FK
+    string body
+  }
+
+  PostLike {
+    string id PK
+    string postId FK
+    string userId FK
+  }
+
+  PostShare {
+    string id PK
+    string postId FK
+    string userId FK
+    string channel
+  }
+
+  Organization {
+    string id PK
+    string name
+  }
+
+  SurveyCampaign {
+    string id PK
+    string surveyPostId FK
+    string sponsorOrgId FK
+  }
+
+  SurveyQuestion {
+    string id PK
+    string surveyPostId FK
+    string prompt
+  }
+
+  SurveyOption {
+    string id PK
+    string questionId FK
+    string label
+  }
+
+  SurveyResponse {
+    string id PK
+    string surveyPostId FK
+    string userId FK
+  }
+
+  SurveyAnswer {
+    string id PK
+    string responseId FK
+    string questionId FK
+  }
+
+  CategoryOverallReview {
+    string id PK
+    string categoryId FK
+    float averageTierScore
+  }
+
+  LeaderboardSnapshot {
+    string id PK
+    string categoryId FK
+    string period
+    datetime computedAt
+  }
+
+  LeaderboardEntry {
+    string id PK
+    string snapshotId FK
+    string userId FK
+    float score
+  }
+

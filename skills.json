@@ -1,0 +1,22 @@
+{
+  "project_name": "Relational-Backend-Prisma",
+  "engine": "gpt-5.3-codex",
+  "allowed_tools": [
+    "terminal_access",
+    "file_system_write",
+    "npm_install",
+    "prisma_cli"
+  ],
+  "tech_stack": {
+    "runtime": "Node.js v22",
+    "language": "TypeScript",
+    "framework": "Express",
+    "database": "PostgreSQL",
+    "orm": "Prisma",
+    "validation": "Zod"
+  },
+  "preferences": {
+    "package_manager": "pnpm",
+    "schema_path": "./prisma/schema.prisma"
+  }
+}

@@ -1,0 +1,298 @@
+openapi: 3.0.3
+info:
+  title: Rankster API
+  version: 0.1.0
+  description: |
+    Rankster backend API for social tier-list ranking posts and survey posts (ad units).
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: Feed
+  - name: Ranks
+  - name: Search
+  - name: Users
+security:
+  - bearerAuth: []
+paths:
+  /feed/main:
+    get:
+      tags: [Feed]
+      summary: Main feed (organic + injected survey ads)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+          description: Opaque pagination cursor.
+        - name: includeAds
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Feed page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeedItem" }
+                  nextCursor:
+                    type: string
+                    nullable: true
+  /rank/create:
+    post:
+      tags: [Ranks]
+      summary: Create a rank post (core posting functionality)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RankCreateRequest" }
+      responses:
+        "201":
+          description: Created rank post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Unauthorized
+  /search/categories:
+    get:
+      tags: [Search]
+      summary: Search categories (tier list discovery)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: Category search results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Category" }
+  /user/stats:
+    get:
+      tags: [Users]
+      summary: Advanced user stats (subscriber-only)
+      description: Requires an active PRO (or higher) subscription.
+      responses:
+        "200":
+          description: Advanced stats
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdvancedUserStats" }
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden (not subscribed)
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: "VALIDATION_ERROR" }
+        message: { type: string, example: "tierKey is required" }
+        details:
+          type: object
+          additionalProperties: true
+    FeedItem:
+      oneOf:
+        - $ref: "#/components/schemas/FeedRankItem"
+        - $ref: "#/components/schemas/FeedSurveyItem"
+      discriminator:
+        propertyName: kind
+        mapping:
+          rank: "#/components/schemas/FeedRankItem"
+          survey: "#/components/schemas/FeedSurveyItem"
+    FeedRankItem:
+      type: object
+      required: [kind, post]
+      properties:
+        kind: { type: string, enum: [rank] }
+        post: { $ref: "#/components/schemas/Post" }
+    FeedSurveyItem:
+      type: object
+      required: [kind, post, campaign]
+      properties:
+        kind: { type: string, enum: [survey] }
+        post: { $ref: "#/components/schemas/Post" }
+        campaign:
+          type: object
+          required: [campaignId]
+          properties:
+            campaignId: { type: string }
+            sponsoredBy:
+              type: object
+              properties:
+                organizationId: { type: string }
+                name: { type: string }
+    Category:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        icon: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+    Asset:
+      type: object
+      required: [id, url]
+      properties:
+        id: { type: string }
+        url: { type: string }
+        mimeType: { type: string, nullable: true }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+    Post:
+      type: object
+      required: [id, type, visibility, createdAt, creator, category, metrics]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [RANK, SURVEY] }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE] }
+        caption: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        creator:
+          type: object
+          required: [id, username]
+          properties:
+            id: { type: string }
+            username: { type: string }
+            displayName: { type: string, nullable: true }
+            avatarUrl: { type: string, nullable: true }
+        category: { $ref: "#/components/schemas/Category" }
+        metrics:
+          type: object
+          required: [likeCount, commentCount, shareCount, hotScore]
+          properties:
+            likeCount: { type: integer }
+            commentCount: { type: integer }
+            shareCount: { type: integer }
+            hotScore: { type: number }
+        rank:
+          allOf:
+            - $ref: "#/components/schemas/RankPost"
+          nullable: true
+        survey:
+          allOf:
+            - $ref: "#/components/schemas/SurveyPost"
+          nullable: true
+    RankPost:
+      type: object
+      required: [templateId, tierKey, image]
+      properties:
+        templateId: { type: string }
+        tierKey: { type: string, example: "S" }
+        image: { $ref: "#/components/schemas/Asset" }
+        subjectTitle: { type: string, nullable: true }
+        subjectUrl: { type: string, nullable: true }
+    SurveyPost:
+      type: object
+      required: [surveyType, title, questions]
+      properties:
+        surveyType: { type: string, enum: [THESIS, GROUP_WORK, COMPETITIVE, CORPORATE_AD] }
+        sponsor:
+          type: object
+          nullable: true
+          properties:
+            organizationId: { type: string }
+            name: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        endsAt: { type: string, format: date-time, nullable: true }
+        questions:
+          type: array
+          items: { $ref: "#/components/schemas/SurveyQuestion" }
+    SurveyQuestion:
+      type: object
+      required: [id, order, type, prompt, required]
+      properties:
+        id: { type: string }
+        order: { type: integer }
+        type: { type: string, enum: [SINGLE_CHOICE, MULTI_CHOICE, FREE_TEXT] }
+        prompt: { type: string }
+        required: { type: boolean }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/SurveyOption" }
+    SurveyOption:
+      type: object
+      required: [id, order, label]
+      properties:
+        id: { type: string }
+        order: { type: integer }
+        label: { type: string }
+        value: { type: string, nullable: true }
+    RankCreateRequest:
+      type: object
+      required: [categoryId, templateId, tierKey, imageAssetId]
+      properties:
+        categoryId: { type: string }
+        templateId: { type: string }
+        tierKey: { type: string, example: "A" }
+        imageAssetId: { type: string, description: "Previously uploaded asset id." }
+        caption: { type: string, nullable: true }
+        subjectTitle: { type: string, nullable: true }
+        subjectUrl: { type: string, nullable: true }
+        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE], default: PUBLIC }
+    AdvancedUserStats:
+      type: object
+      required: [userId, totals]
+      properties:
+        userId: { type: string }
+        totals:
+          type: object
+          required: [ranksCreated, likesReceived, commentsReceived]
+          properties:
+            ranksCreated: { type: integer }
+            likesReceived: { type: integer }
+            commentsReceived: { type: integer }
+        byCategory:
+          type: array
+          items:
+            type: object
+            required: [categoryId, averageTierScore, sampleSize]
+            properties:
+              categoryId: { type: string }
+              averageTierScore: { type: number }
+              sampleSize: { type: integer }
+        engagement:
+          type: object
+          properties:
+            followerCount: { type: integer }
+            followingCount: { type: integer }
+

@@ -10,7 +10,11 @@ func TestLoadUsesDefaults(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.DatabaseURL != "postgresql://postgres:postgres@localhost:5432/rankster?sslmode=disable" {
+	expectedDSN := "postgresql://tester@localhost:5432/rankster?sslmode=disable"
+	t.Setenv("USER", "tester")
+	cfg = Load()
+
+	if cfg.DatabaseURL != expectedDSN {
 		t.Fatalf("unexpected default DATABASE_URL: %s", cfg.DatabaseURL)
 	}
 	if cfg.Host != "0.0.0.0" {
@@ -21,6 +25,14 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.PublicBaseURL != "http://localhost:8000" {
 		t.Fatalf("unexpected default PUBLIC_BASE_URL: %s", cfg.PublicBaseURL)
+	}
+}
+
+func TestDefaultDatabaseURLFallsBackToPostgres(t *testing.T) {
+	t.Setenv("USER", "")
+
+	if got := defaultDatabaseURL(); got == "" {
+		t.Fatal("defaultDatabaseURL returned an empty string")
 	}
 }
 

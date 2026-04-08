@@ -1,6 +1,11 @@
 package config
 
-import "os"
+import (
+	"fmt"
+	"net/url"
+	"os"
+	"os/user"
+)
 
 type Config struct {
 	DatabaseURL   string
@@ -11,11 +16,28 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		DatabaseURL:   getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rankster?sslmode=disable"),
+		DatabaseURL:   getEnv("DATABASE_URL", defaultDatabaseURL()),
 		Host:          getEnv("HOST", "0.0.0.0"),
 		Port:          getEnv("PORT", "8000"),
 		PublicBaseURL: getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
 	}
+}
+
+func defaultDatabaseURL() string {
+	username := os.Getenv("USER")
+	if username == "" {
+		if currentUser, err := user.Current(); err == nil && currentUser.Username != "" {
+			username = currentUser.Username
+		}
+	}
+	if username == "" {
+		username = "postgres"
+	}
+
+	return fmt.Sprintf(
+		"postgresql://%s@localhost:5432/rankster?sslmode=disable",
+		url.QueryEscape(username),
+	)
 }
 
 func getEnv(key, fallback string) string {

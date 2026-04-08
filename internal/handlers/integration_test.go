@@ -8,54 +8,21 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 
-	"rankster-backend/internal/models"
 	"rankster-backend/internal/server"
 	"rankster-backend/internal/testutil"
 )
 
-func TestSearchCategoriesReturnsSeededCategory(t *testing.T) {
+func TestMockLoginReturnsBearerSession(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
 	RegisterRoutes(router, database)
 
-	req := httptest.NewRequest(http.MethodGet, "/search/categories?q=coffee", nil)
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-
-	var response struct {
-		Items []struct {
-			Slug string `json:"slug"`
-			Name string `json:"name"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(response.Items) == 0 {
-		t.Fatalf("expected at least one category")
-	}
-	if response.Items[0].Slug != "coffee" {
-		t.Fatalf("expected coffee slug, got %q", response.Items[0].Slug)
-	}
-}
-
-func TestFeedMainReturnsSeededItems(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	database := testutil.NewTestDatabase(t)
-	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
-
-	req := httptest.NewRequest(http.MethodGet, "/feed/main", nil)
+	body := bytes.NewBufferString(`{"username":"me"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/mock-login", body)
+	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, req)
@@ -65,24 +32,70 @@ func TestFeedMainReturnsSeededItems(t *testing.T) {
 	}
 
 	var response struct {
-		Items []map[string]any `json:"items"`
+		AccessToken string `json:"accessToken"`
+		TokenType   string `json:"tokenType"`
+		User        struct {
+			Username    string `json:"username"`
+			DisplayName string `json:"displayName"`
+		} `json:"user"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(response.Items) == 0 {
-		t.Fatalf("expected feed items")
+	if response.AccessToken == "" || response.TokenType != "Bearer" || response.User.Username != "me" || response.User.DisplayName != "Alex Rivera" {
+		t.Fatalf("unexpected auth response: %+v", response)
 	}
 }
 
-func TestUserStatsRequiresAuth(t *testing.T) {
+func TestFeedMainReturnsDatabaseRankPosts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
 	RegisterRoutes(router, database)
 
-	req := httptest.NewRequest(http.MethodGet, "/user/stats", nil)
+	req := httptest.NewRequest(http.MethodGet, "/feed/main?limit=2", nil)
+	req.Header.Set("Host", "localhost:8000")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		Items []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+			User  struct {
+				Username string `json:"username"`
+			} `json:"user"`
+		} `json:"items"`
+		NextCursor any `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Items) != 2 {
+		t.Fatalf("expected 2 feed items, got %d", len(response.Items))
+	}
+	if response.Items[0].ID == "" || response.Items[0].User.Username == "" || response.Items[0].Title == "" {
+		t.Fatalf("unexpected feed item payload: %+v", response.Items[0])
+	}
+	if response.NextCursor == nil {
+		t.Fatalf("expected nextCursor for paged feed response")
+	}
+}
+
+func TestProfileMeRequiresAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database)
+
+	req := httptest.NewRequest(http.MethodGet, "/profile/me", nil)
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, req)
@@ -92,16 +105,18 @@ func TestUserStatsRequiresAuth(t *testing.T) {
 	}
 }
 
-func TestUserStatsReturnsSeededSubscriberData(t *testing.T) {
+func TestProfileMeReturnsUserAndRankings(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	database := testutil.NewTestDatabase(t)
-	aliceUserID := seededUserID(t, database, "alice")
 	router := server.BuildRouter(database)
 	RegisterRoutes(router, database)
 
-	req := httptest.NewRequest(http.MethodGet, "/user/stats", nil)
-	req.Header.Set("Authorization", "Bearer "+aliceUserID)
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodGet, "/profile/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Host", "localhost:8000")
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, req)
@@ -111,40 +126,47 @@ func TestUserStatsReturnsSeededSubscriberData(t *testing.T) {
 	}
 
 	var response struct {
-		UserID string `json:"userId"`
-		Totals struct {
-			RanksCreated int `json:"ranksCreated"`
-		} `json:"totals"`
+		User struct {
+			Username string `json:"username"`
+		} `json:"user"`
+		Rankings []struct {
+			ID string `json:"id"`
+		} `json:"rankings"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.UserID != aliceUserID {
-		t.Fatalf("unexpected userId: %s", response.UserID)
-	}
-	if response.Totals.RanksCreated != 1 {
-		t.Fatalf("expected 1 seeded rank, got %d", response.Totals.RanksCreated)
+	if response.User.Username != "me" {
+		t.Fatalf("expected current db user, got %q", response.User.Username)
 	}
 }
 
-func TestRankCreateCreatesPostAndUpdatesStats(t *testing.T) {
+func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	database := testutil.NewTestDatabase(t)
-	aliceUserID := seededUserID(t, database, "alice")
-	categoryID := seededCategoryID(t, database, "coffee")
-	templateID := seededTemplateID(t, database, "Coffee Master Tier List")
-	assetID := seededAssetID(t, database, "/assets/ranks/latte.svg")
 	router := server.BuildRouter(database)
 	RegisterRoutes(router, database)
 
+	token := mockLoginToken(t, router, "me")
+
 	payload := map[string]any{
-		"categoryId":   categoryID,
-		"templateId":   templateID,
-		"tierKey":      "B",
-		"imageAssetId": assetID,
-		"caption":      "Cold Brew belongs in B tier",
-		"subjectTitle": "Cold Brew",
+		"title":       "Best Coffee Orders",
+		"category":    "food",
+		"description": "A database-backed ranking post",
+		"tags":        []string{"coffee", "drinks"},
+		"allItems": []map[string]any{
+			{"id": "a", "name": "Latte"},
+			{"id": "b", "name": "Americano"},
+		},
+		"tiers": map[string]any{
+			"S": []map[string]any{{"id": "a", "name": "Latte"}},
+			"A": []map[string]any{{"id": "b", "name": "Americano"}},
+			"B": []map[string]any{},
+			"C": []map[string]any{},
+			"D": []map[string]any{},
+		},
+		"isPublic": true,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -152,8 +174,9 @@ func TestRankCreateCreatesPostAndUpdatesStats(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/rank/create", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+aliceUserID)
+	req.Header.Set("Host", "localhost:8000")
 	recorder := httptest.NewRecorder()
 
 	router.ServeHTTP(recorder, req)
@@ -162,65 +185,39 @@ func TestRankCreateCreatesPostAndUpdatesStats(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
 	}
 
-	statsReq := httptest.NewRequest(http.MethodGet, "/user/stats", nil)
-	statsReq.Header.Set("Authorization", "Bearer "+aliceUserID)
-	statsRecorder := httptest.NewRecorder()
-
-	router.ServeHTTP(statsRecorder, statsReq)
-
-	if statsRecorder.Code != http.StatusOK {
-		t.Fatalf("stats status = %d, want %d; body=%s", statsRecorder.Code, http.StatusOK, statsRecorder.Body.String())
+	var created struct {
+		Title string `json:"title"`
+		User  struct {
+			Username string `json:"username"`
+		} `json:"user"`
 	}
-
-	var statsResponse struct {
-		Totals struct {
-			RanksCreated int `json:"ranksCreated"`
-		} `json:"totals"`
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
 	}
-	if err := json.Unmarshal(statsRecorder.Body.Bytes(), &statsResponse); err != nil {
-		t.Fatalf("decode stats response: %v", err)
-	}
-	if statsResponse.Totals.RanksCreated != 2 {
-		t.Fatalf("expected ranksCreated to increment to 2, got %d", statsResponse.Totals.RanksCreated)
+	if created.Title != "Best Coffee Orders" || created.User.Username != "me" {
+		t.Fatalf("unexpected create response: %+v", created)
 	}
 }
 
-func seededUserID(t *testing.T, database *gorm.DB, username string) string {
+func mockLoginToken(t *testing.T, router http.Handler, username string) string {
 	t.Helper()
 
-	var profile models.UserProfile
-	if err := database.Where("username = ?", username).First(&profile).Error; err != nil {
-		t.Fatalf("load seeded user profile %q: %v", username, err)
+	body := bytes.NewBufferString(`{"username":"` + username + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/mock-login", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	return profile.UserID
-}
 
-func seededCategoryID(t *testing.T, database *gorm.DB, slug string) string {
-	t.Helper()
-
-	var category models.Category
-	if err := database.Where("slug = ?", slug).First(&category).Error; err != nil {
-		t.Fatalf("load seeded category %q: %v", slug, err)
+	var response struct {
+		AccessToken string `json:"accessToken"`
 	}
-	return category.ID
-}
-
-func seededTemplateID(t *testing.T, database *gorm.DB, title string) string {
-	t.Helper()
-
-	var template models.TierListTemplate
-	if err := database.Where("title = ?", title).First(&template).Error; err != nil {
-		t.Fatalf("load seeded template %q: %v", title, err)
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode login response: %v", err)
 	}
-	return template.ID
-}
-
-func seededAssetID(t *testing.T, database *gorm.DB, urlSuffix string) string {
-	t.Helper()
-
-	var asset models.Asset
-	if err := database.Where("url LIKE ?", "%"+urlSuffix).First(&asset).Error; err != nil {
-		t.Fatalf("load seeded asset %q: %v", urlSuffix, err)
-	}
-	return asset.ID
+	return response.AccessToken
 }

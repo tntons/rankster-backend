@@ -21,6 +21,7 @@ func main() {
 	if err := db.EnsureDatabase(database, cfg.PublicBaseURL); err != nil {
 		log.Fatalf("db bootstrap failed: %v", err)
 	}
+	log.Printf("database connected: %s", cfg.DatabaseURL)
 
 	router := server.BuildRouter(database)
 	handlers.RegisterRoutes(router, database)

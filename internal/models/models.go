@@ -37,6 +37,7 @@ type UserProfile struct {
 	Bio         *string
 	AvatarURL   *string
 	ThemeColor  *string
+	Verified    bool
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -76,6 +77,8 @@ type Category struct {
 	Name        string         `json:"name"`
 	Description *string        `json:"description"`
 	Icon        *string        `json:"icon"`
+	Emoji       *string        `json:"emoji"`
+	Color       *string        `json:"color"`
 	Tags        pq.StringArray `gorm:"type:text[]" json:"tags"`
 	CreatedAt   time.Time      `json:"createdAt"`
 	UpdatedAt   time.Time      `json:"updatedAt"`
@@ -139,6 +142,34 @@ type RankPost struct {
 	SubjectURL   *string
 
 	Image Asset `gorm:"foreignKey:ImageAssetID"`
+}
+
+type TierListPost struct {
+	PostID           string `gorm:"type:uuid;primaryKey"`
+	Title            string
+	Description      *string
+	CoverAssetID     *string        `gorm:"type:uuid;index"`
+	Tags             pq.StringArray `gorm:"type:text[]"`
+	ParticipantCount int
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+
+	Post       Post           `gorm:"foreignKey:PostID"`
+	CoverAsset *Asset         `gorm:"foreignKey:CoverAssetID"`
+	Items      []TierListItem `gorm:"foreignKey:TierListPostID;references:PostID"`
+}
+
+type TierListItem struct {
+	ID             string `gorm:"type:uuid;primaryKey"`
+	TierListPostID string `gorm:"type:uuid;index"`
+	ExternalID     string
+	Name           string
+	Emoji          *string
+	TierKey        string
+	TierPosition   int
+	ListPosition   int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type SurveyPost struct {
@@ -212,8 +243,11 @@ type Comment struct {
 	PostID    string `gorm:"type:uuid;index"`
 	AuthorID  string `gorm:"type:uuid;index"`
 	Body      string
+	LikeCount int
 	CreatedAt time.Time
 	UpdatedAt time.Time
+
+	Author User `gorm:"foreignKey:AuthorID"`
 }
 
 type PostLike struct {
@@ -238,6 +272,45 @@ type PinnedPost struct {
 	PostID    string `gorm:"type:uuid;index"`
 	Order     *int
 	CreatedAt time.Time
+}
+
+type MessageThread struct {
+	ID          string `gorm:"type:uuid;primaryKey"`
+	OwnerUserID string `gorm:"type:uuid;index"`
+	PeerUserID  string `gorm:"type:uuid;index"`
+	LastMessage string
+	UnreadCount int
+	UpdatedAt   time.Time
+	CreatedAt   time.Time
+
+	OwnerUser User `gorm:"foreignKey:OwnerUserID"`
+	PeerUser  User `gorm:"foreignKey:PeerUserID"`
+}
+
+type TrendingTopic struct {
+	ID               string `gorm:"type:uuid;primaryKey"`
+	Title            string
+	CategoryID       string  `gorm:"type:uuid;index"`
+	CoverAssetID     *string `gorm:"type:uuid;index"`
+	ParticipantCount int
+	Tags             pq.StringArray `gorm:"type:text[]"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+
+	Category   Category `gorm:"foreignKey:CategoryID"`
+	CoverAsset *Asset   `gorm:"foreignKey:CoverAssetID"`
+}
+
+type LeaderboardEntry struct {
+	ID        string `gorm:"type:uuid;primaryKey"`
+	UserID    string `gorm:"type:uuid;index"`
+	Rank      int
+	Score     int
+	Change    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	User User `gorm:"foreignKey:UserID"`
 }
 
 type Organization struct {

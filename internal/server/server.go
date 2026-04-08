@@ -13,6 +13,14 @@ import (
 func BuildRouter(db *gorm.DB) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Logger(), gin.Recovery(), devCORS())
+	router.NoRoute(func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			writeDevCORSHeaders(c)
+			c.Status(http.StatusNoContent)
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"code": "NOT_FOUND", "message": "route not found"})
+	})
 	router.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
@@ -23,13 +31,7 @@ func BuildRouter(db *gorm.DB) *gin.Engine {
 
 func devCORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		if origin != "" && isAllowedDevOrigin(origin) {
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		}
+		writeDevCORSHeaders(c)
 
 		if c.Request.Method == http.MethodOptions {
 			c.Status(http.StatusNoContent)
@@ -39,6 +41,18 @@ func devCORS() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+func writeDevCORSHeaders(c *gin.Context) {
+	origin := c.GetHeader("Origin")
+	if origin == "" || !isAllowedDevOrigin(origin) {
+		return
+	}
+
+	c.Header("Access-Control-Allow-Origin", origin)
+	c.Header("Vary", "Origin")
+	c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 }
 
 func isAllowedDevOrigin(origin string) bool {

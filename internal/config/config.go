@@ -12,7 +12,7 @@ func Load() Config {
 	return Config{
 		DatabaseURL: getEnv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/rankster?sslmode=disable"),
 		Host:        getEnv("HOST", "0.0.0.0"),
-		Port:        getEnv("PORT", "3000"),
+		Port:        getEnv("PORT", "8000"),
 	}
 }
 

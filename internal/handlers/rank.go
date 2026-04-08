@@ -137,7 +137,13 @@ func (h *RankHandler) CreateRank(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, toPostView(created))
+	response, err := buildFrontendFeedResponse(h.db, []models.Post{created}, authCtx, "")
+	if err != nil || len(response.Items) == 0 {
+		c.JSON(http.StatusCreated, gin.H{"id": created.ID})
+		return
+	}
+
+	c.JSON(http.StatusCreated, response.Items[0])
 }
 
 type handlerError struct {

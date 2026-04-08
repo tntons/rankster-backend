@@ -108,7 +108,7 @@ func (h *FeedHandler) GetMainFeed(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":     items,
+		"items":      items,
 		"nextCursor": emptyToNull(nextCursor),
 	})
 }
@@ -122,10 +122,10 @@ func applyPostPreloads(db *gorm.DB) *gorm.DB {
 		Preload("Survey.SponsorOrg").
 		Preload("Survey.Campaign").
 		Preload("Survey.Questions", func(tx *gorm.DB) *gorm.DB {
-			return tx.Order("`order` asc")
+			return tx.Order("\"order\" asc")
 		}).
 		Preload("Survey.Questions.Options", func(tx *gorm.DB) *gorm.DB {
-			return tx.Order("`order` asc")
+			return tx.Order("\"order\" asc")
 		})
 }
 
@@ -177,7 +177,7 @@ func buildFeedItems(db *gorm.DB, posts []models.Post, authCtx auth.Context, incl
 		payload := gin.H{"kind": "survey", "post": injected, "campaign": gin.H{"campaignId": ad.ID}}
 		if ad.SurveyPost.SponsorOrg != nil {
 			payload["campaign"] = gin.H{
-				"campaignId": ad.ID,
+				"campaignId":  ad.ID,
 				"sponsoredBy": gin.H{"organizationId": ad.SurveyPost.SponsorOrg.ID, "name": ad.SurveyPost.SponsorOrg.Name},
 			}
 		}

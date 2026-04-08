@@ -16,4 +16,3 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB) {
 	router.GET("/search/categories", searchHandler.SearchCategories)
 	router.GET("/user/stats", userHandler.GetStats)
 }
-

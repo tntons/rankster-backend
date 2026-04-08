@@ -111,7 +111,7 @@ func (h *RankHandler) CreateRank(c *gin.Context) {
 
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_id"}},
-			DoUpdates: clause.Assignments(map[string]any{"ranks_created_count": gorm.Expr("ranks_created_count + 1")}),
+			DoUpdates: clause.Assignments(map[string]any{"ranks_created_count": gorm.Expr("\"user_stats\".\"ranks_created_count\" + EXCLUDED.\"ranks_created_count\"")}),
 		}).Create(&models.UserStats{
 			ID:                uuid.NewString(),
 			UserID:            authCtx.UserID,

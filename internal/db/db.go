@@ -11,4 +11,3 @@ func Connect(dsn string) (*gorm.DB, error) {
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 }
-

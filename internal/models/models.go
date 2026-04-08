@@ -42,12 +42,12 @@ type UserProfile struct {
 }
 
 type UserStats struct {
-	ID                 string `gorm:"type:uuid;primaryKey"`
-	UserID             string `gorm:"type:uuid;uniqueIndex"`
-	RanksCreatedCount  int
-	FollowersCount     int
-	FollowingCount     int
-	UpdatedAt          time.Time
+	ID                string `gorm:"type:uuid;primaryKey"`
+	UserID            string `gorm:"type:uuid;uniqueIndex"`
+	RanksCreatedCount int
+	FollowersCount    int
+	FollowingCount    int
+	UpdatedAt         time.Time
 }
 
 type Subscription struct {
@@ -82,8 +82,8 @@ type Category struct {
 }
 
 type TierListTemplate struct {
-	ID          string `gorm:"type:uuid;primaryKey"`
-	CategoryID  string `gorm:"type:uuid;index"`
+	ID          string  `gorm:"type:uuid;primaryKey"`
+	CategoryID  string  `gorm:"type:uuid;index"`
 	CreatorID   *string `gorm:"type:uuid;index"`
 	IsMaster    bool
 	Title       string
@@ -114,17 +114,17 @@ type Asset struct {
 }
 
 type Post struct {
-	ID         string `gorm:"type:uuid;primaryKey" json:"id"`
-	Type       string `json:"type"`
-	Visibility string `json:"visibility"`
-	CreatorID  string `gorm:"type:uuid;index"`
-	CategoryID string `gorm:"type:uuid;index"`
-	Caption    *string `json:"caption"`
+	ID         string    `gorm:"type:uuid;primaryKey" json:"id"`
+	Type       string    `json:"type"`
+	Visibility string    `json:"visibility"`
+	CreatorID  string    `gorm:"type:uuid;index"`
+	CategoryID string    `gorm:"type:uuid;index"`
+	Caption    *string   `json:"caption"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 
-	Creator  User     `gorm:"foreignKey:CreatorID" json:"-"`
-	Category Category `gorm:"foreignKey:CategoryID" json:"-"`
+	Creator  User         `gorm:"foreignKey:CreatorID" json:"-"`
+	Category Category     `gorm:"foreignKey:CategoryID" json:"-"`
 	Metrics  *PostMetrics `gorm:"foreignKey:PostID" json:"-"`
 	Rank     *RankPost    `gorm:"foreignKey:PostID" json:"-"`
 	Survey   *SurveyPost  `gorm:"foreignKey:PostID" json:"-"`
@@ -149,9 +149,9 @@ type SurveyPost struct {
 	Description  *string
 	EndsAt       *time.Time
 
-	Post       Post           `gorm:"foreignKey:PostID"`
-	SponsorOrg *Organization   `gorm:"foreignKey:SponsorOrgID"`
-	Campaign   *SurveyCampaign `gorm:"foreignKey:SurveyPostID"`
+	Post       Post             `gorm:"foreignKey:PostID"`
+	SponsorOrg *Organization    `gorm:"foreignKey:SponsorOrgID"`
+	Campaign   *SurveyCampaign  `gorm:"foreignKey:SurveyPostID"`
 	Questions  []SurveyQuestion `gorm:"foreignKey:SurveyPostID"`
 }
 
@@ -175,24 +175,24 @@ type SurveyOption struct {
 }
 
 type SurveyCampaign struct {
-	ID           string `gorm:"type:uuid;primaryKey"`
-	SurveyPostID string `gorm:"type:uuid;uniqueIndex"`
-	SponsorOrgID string `gorm:"type:uuid;index"`
-	StartAt      time.Time
-	EndAt        *time.Time
-	BudgetCents  int
-	SpentCents   int
+	ID                string `gorm:"type:uuid;primaryKey"`
+	SurveyPostID      string `gorm:"type:uuid;uniqueIndex"`
+	SponsorOrgID      string `gorm:"type:uuid;index"`
+	StartAt           time.Time
+	EndAt             *time.Time
+	BudgetCents       int
+	SpentCents        int
 	TargetImpressions *int
-	Targeting   *string `gorm:"type:jsonb"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	Targeting         *string `gorm:"type:jsonb"`
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 
 	SurveyPost SurveyPost `gorm:"foreignKey:SurveyPostID"`
 }
 
 type SurveyImpression struct {
-	ID            string `gorm:"type:uuid;primaryKey"`
-	CampaignID    string `gorm:"type:uuid;index"`
+	ID            string  `gorm:"type:uuid;primaryKey"`
+	CampaignID    string  `gorm:"type:uuid;index"`
 	UserID        *string `gorm:"type:uuid;index"`
 	FeedRequestID *string
 	CreatedAt     time.Time

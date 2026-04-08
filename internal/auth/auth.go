@@ -22,4 +22,3 @@ func FromAuthorization(header string) Context {
 	}
 	return Context{Kind: "user", UserID: token}
 }
-

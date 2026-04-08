@@ -18,6 +18,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("db connect failed: %v", err)
 	}
+	if err := db.EnsureDatabase(database); err != nil {
+		log.Fatalf("db bootstrap failed: %v", err)
+	}
 
 	router := server.BuildRouter(database)
 	handlers.RegisterRoutes(router, database)
@@ -32,7 +35,5 @@ func main() {
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server failed: %v", err)
 	}
-
 	_ = os.Stdout
 }
-

@@ -15,4 +15,3 @@ func BuildRouter(db *gorm.DB) *gin.Engine {
 	})
 	return router
 }
-

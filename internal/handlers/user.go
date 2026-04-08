@@ -126,4 +126,3 @@ func tierKeyToScore(tierKey string) int {
 		return 0
 	}
 }
-

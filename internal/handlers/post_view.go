@@ -7,21 +7,21 @@ import (
 )
 
 type PostView struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Visibility string `json:"visibility"`
-	Caption    *string `json:"caption"`
-	CreatedAt  string `json:"createdAt"`
-	Creator    CreatorView `json:"creator"`
+	ID         string       `json:"id"`
+	Type       string       `json:"type"`
+	Visibility string       `json:"visibility"`
+	Caption    *string      `json:"caption"`
+	CreatedAt  string       `json:"createdAt"`
+	Creator    CreatorView  `json:"creator"`
 	Category   CategoryView `json:"category"`
-	Metrics    MetricsView `json:"metrics"`
-	Rank       *RankView `json:"rank"`
-	Survey     *SurveyView `json:"survey"`
+	Metrics    MetricsView  `json:"metrics"`
+	Rank       *RankView    `json:"rank"`
+	Survey     *SurveyView  `json:"survey"`
 }
 
 type CreatorView struct {
-	ID          string `json:"id"`
-	Username    string `json:"username"`
+	ID          string  `json:"id"`
+	Username    string  `json:"username"`
 	DisplayName *string `json:"displayName"`
 	AvatarURL   *string `json:"avatarUrl"`
 }
@@ -43,11 +43,11 @@ type MetricsView struct {
 }
 
 type RankView struct {
-	TemplateID   string `json:"templateId"`
-	TierKey      string `json:"tierKey"`
+	TemplateID   string    `json:"templateId"`
+	TierKey      string    `json:"tierKey"`
 	Image        AssetView `json:"image"`
-	SubjectTitle *string `json:"subjectTitle"`
-	SubjectURL   *string `json:"subjectUrl"`
+	SubjectTitle *string   `json:"subjectTitle"`
+	SubjectURL   *string   `json:"subjectUrl"`
 }
 
 type AssetView struct {
@@ -59,12 +59,12 @@ type AssetView struct {
 }
 
 type SurveyView struct {
-	SurveyType string `json:"surveyType"`
-	Sponsor    *SponsorView `json:"sponsor"`
-	Title      string `json:"title"`
-	Description *string `json:"description"`
-	EndsAt     *string `json:"endsAt"`
-	Questions  []SurveyQuestionView `json:"questions"`
+	SurveyType  string               `json:"surveyType"`
+	Sponsor     *SponsorView         `json:"sponsor"`
+	Title       string               `json:"title"`
+	Description *string              `json:"description"`
+	EndsAt      *string              `json:"endsAt"`
+	Questions   []SurveyQuestionView `json:"questions"`
 }
 
 type SponsorView struct {
@@ -73,18 +73,18 @@ type SponsorView struct {
 }
 
 type SurveyQuestionView struct {
-	ID       string `json:"id"`
-	Order    int    `json:"order"`
-	Type     string `json:"type"`
-	Prompt   string `json:"prompt"`
-	Required bool   `json:"required"`
+	ID       string             `json:"id"`
+	Order    int                `json:"order"`
+	Type     string             `json:"type"`
+	Prompt   string             `json:"prompt"`
+	Required bool               `json:"required"`
 	Options  []SurveyOptionView `json:"options"`
 }
 
 type SurveyOptionView struct {
-	ID    string `json:"id"`
-	Order int    `json:"order"`
-	Label string `json:"label"`
+	ID    string  `json:"id"`
+	Order int     `json:"order"`
+	Label string  `json:"label"`
 	Value *string `json:"value"`
 }
 
@@ -190,4 +190,3 @@ func toAssetView(asset models.Asset) AssetView {
 		Height:   asset.Height,
 	}
 }
-

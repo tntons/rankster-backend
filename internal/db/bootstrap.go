@@ -2,6 +2,8 @@ package db
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,7 +41,7 @@ func AutoMigrate(database *gorm.DB) error {
 	)
 }
 
-func Seed(database *gorm.DB) error {
+func Seed(database *gorm.DB, publicBaseURL string) error {
 	var existingUsers int64
 	if err := database.Model(&models.User{}).Count(&existingUsers).Error; err != nil {
 		return err
@@ -68,8 +70,11 @@ func Seed(database *gorm.DB) error {
 		aliceUsername := "alice"
 		bobUsername := "bob"
 		theme := "#0f766e"
-		latteURL := "https://cdn.example.com/dev/latte.jpg"
-		espressoURL := "https://cdn.example.com/dev/espresso.jpg"
+		baseURL := strings.TrimRight(publicBaseURL, "/")
+		latteURL := fmt.Sprintf("%s/assets/ranks/latte.svg", baseURL)
+		espressoURL := fmt.Sprintf("%s/assets/ranks/espresso.svg", baseURL)
+		aliceAvatarURL := fmt.Sprintf("%s/assets/avatars/alice.svg", baseURL)
+		bobAvatarURL := fmt.Sprintf("%s/assets/avatars/bob.svg", baseURL)
 		orgWebsite := "https://example.com"
 		surveyDescription := "Anonymous research survey."
 
@@ -90,8 +95,8 @@ func Seed(database *gorm.DB) error {
 		}
 
 		profiles := []models.UserProfile{
-			{ID: uuid.NewString(), UserID: aliceID, Username: aliceUsername, DisplayName: &aliceName, ThemeColor: &theme, CreatedAt: now, UpdatedAt: now},
-			{ID: uuid.NewString(), UserID: bobID, Username: bobUsername, DisplayName: &bobName, CreatedAt: now, UpdatedAt: now},
+			{ID: uuid.NewString(), UserID: aliceID, Username: aliceUsername, DisplayName: &aliceName, AvatarURL: &aliceAvatarURL, ThemeColor: &theme, CreatedAt: now, UpdatedAt: now},
+			{ID: uuid.NewString(), UserID: bobID, Username: bobUsername, DisplayName: &bobName, AvatarURL: &bobAvatarURL, CreatedAt: now, UpdatedAt: now},
 		}
 		if err := tx.Create(&profiles).Error; err != nil {
 			return err
@@ -233,14 +238,52 @@ func Seed(database *gorm.DB) error {
 	})
 }
 
-func EnsureDatabase(database *gorm.DB) error {
+func EnsureDatabase(database *gorm.DB, publicBaseURL string) error {
 	if database == nil {
 		return errors.New("nil database")
 	}
 	if err := AutoMigrate(database); err != nil {
 		return err
 	}
-	return Seed(database)
+	if err := Seed(database, publicBaseURL); err != nil {
+		return err
+	}
+	return ensureLocalDevAssetURLs(database, publicBaseURL)
+}
+
+func ensureLocalDevAssetURLs(database *gorm.DB, publicBaseURL string) error {
+	baseURL := strings.TrimRight(publicBaseURL, "/")
+
+	userUpdates := map[string]string{
+		"alice": fmt.Sprintf("%s/assets/avatars/alice.svg", baseURL),
+		"bob":   fmt.Sprintf("%s/assets/avatars/bob.svg", baseURL),
+	}
+	for username, avatarURL := range userUpdates {
+		if err := database.Model(&models.UserProfile{}).
+			Where("username = ?", username).
+			Update("avatar_url", avatarURL).Error; err != nil {
+			return err
+		}
+	}
+
+	assetUpdates := map[string]string{
+		"latte":    fmt.Sprintf("%s/assets/ranks/latte.svg", baseURL),
+		"espresso": fmt.Sprintf("%s/assets/ranks/espresso.svg", baseURL),
+	}
+	for title, assetURL := range assetUpdates {
+		if err := database.Model(&models.Asset{}).
+			Where("url LIKE ?", "%/"+title+".svg").
+			Update("url", assetURL).Error; err != nil {
+			return err
+		}
+		if err := database.Model(&models.Asset{}).
+			Where("url = ?", "https://cdn.example.com/dev/"+title+".jpg").
+			Update("url", assetURL).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func stringPtr(value string) *string {

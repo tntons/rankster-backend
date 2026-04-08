@@ -18,7 +18,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("db connect failed: %v", err)
 	}
-	if err := db.EnsureDatabase(database); err != nil {
+	if err := db.EnsureDatabase(database, cfg.PublicBaseURL); err != nil {
 		log.Fatalf("db bootstrap failed: %v", err)
 	}
 

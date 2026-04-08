@@ -5,13 +5,12 @@ Start with one deployable unit + one PostgreSQL DB; split by bounded context lat
 
 ## Tech Choices (Recommended)
 
-- Runtime: Node.js (TypeScript)
-- HTTP: (later) Fastify or NestJS
+- Runtime: Go
+- HTTP: Gin
 - DB: PostgreSQL
-- ORM: Prisma
-- Validation: Zod
+- ORM: GORM
 - Storage: Object storage for images (S3/GCS/R2); DB stores metadata only
-- Queue/Workers: (later) Redis + BullMQ (or similar) for aggregation and ad delivery accounting
+- Queue/Workers: (later) Redis + Asynq or Faktory for aggregation and ad delivery accounting
 - Cache: (later) Redis for hot feeds and leaderboards
 
 ## Modules (Bounded Contexts)
@@ -87,4 +86,3 @@ If/when needed:
 1) Extract workers into a separate process (same repo, same DB).
 2) Add read-optimized caches (Redis) for feed and leaderboard.
 3) Split into services by context (users/feed/surveys) with events (Kafka/SNS/SQS).
-

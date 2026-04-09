@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/user"
 	"strings"
 	"testing"
 	"time"
@@ -15,14 +16,12 @@ import (
 	appdb "rankster-backend/internal/db"
 )
 
-const defaultDSN = "postgresql://postgres:postgres@localhost:5432/rankster?sslmode=disable"
-
 func NewTestDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
 
 	baseDSN := os.Getenv("DATABASE_URL")
 	if baseDSN == "" {
-		baseDSN = defaultDSN
+		baseDSN = defaultDatabaseURL()
 	}
 
 	adminDSN, err := withDatabase(baseDSN, "postgres")
@@ -67,6 +66,20 @@ func NewTestDatabase(t *testing.T) *gorm.DB {
 	})
 
 	return database
+}
+
+func defaultDatabaseURL() string {
+	username := os.Getenv("USER")
+	if username == "" {
+		if currentUser, err := user.Current(); err == nil && currentUser.Username != "" {
+			username = currentUser.Username
+		}
+	}
+	if username == "" {
+		username = "postgres"
+	}
+
+	return "postgresql://" + url.QueryEscape(username) + "@localhost:5432/rankster?sslmode=disable"
 }
 
 func withDatabase(dsn, dbName string) (string, error) {

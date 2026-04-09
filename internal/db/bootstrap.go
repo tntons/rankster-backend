@@ -37,6 +37,7 @@ func AutoMigrate(database *gorm.DB) error {
 		&models.PostShare{},
 		&models.PinnedPost{},
 		&models.MessageThread{},
+		&models.DirectMessage{},
 		&models.TrendingTopic{},
 		&models.LeaderboardEntry{},
 	)

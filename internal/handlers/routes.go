@@ -16,13 +16,19 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB) {
 	router.POST("/rank/create", frontendHandler.CreateRank)
 
 	router.GET("/profile/me", frontendHandler.GetProfileMe)
+	router.POST("/profile/me/pinned/:postId", frontendHandler.PinProfilePost)
+	router.DELETE("/profile/me/pinned/:postId", frontendHandler.UnpinProfilePost)
 	router.GET("/profile/:username", frontendHandler.GetProfileByUsername)
+	router.POST("/profile/:username/follow", frontendHandler.FollowProfileUser)
+	router.DELETE("/profile/:username/follow", frontendHandler.UnfollowProfileUser)
 
 	router.GET("/search/overview", frontendHandler.SearchOverview)
 	router.GET("/search/trending", frontendHandler.GetTrendingTopics)
 	router.GET("/search/categories", frontendHandler.GetCategories)
 
 	router.GET("/messages/threads", frontendHandler.GetMessages)
+	router.GET("/messages/threads/:id", frontendHandler.GetMessageThread)
+	router.POST("/messages/threads/:id/messages", frontendHandler.PostMessage)
 	router.GET("/leaderboard", frontendHandler.GetLeaderboard)
 	router.GET("/user/stats", frontendHandler.GetUserStats)
 }

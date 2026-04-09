@@ -283,8 +283,20 @@ type MessageThread struct {
 	UpdatedAt   time.Time
 	CreatedAt   time.Time
 
-	OwnerUser User `gorm:"foreignKey:OwnerUserID"`
-	PeerUser  User `gorm:"foreignKey:PeerUserID"`
+	OwnerUser User            `gorm:"foreignKey:OwnerUserID"`
+	PeerUser  User            `gorm:"foreignKey:PeerUserID"`
+	Messages  []DirectMessage `gorm:"foreignKey:ThreadID"`
+}
+
+type DirectMessage struct {
+	ID           string `gorm:"type:uuid;primaryKey"`
+	ThreadID     string `gorm:"type:uuid;index"`
+	SenderUserID string `gorm:"type:uuid;index"`
+	Body         string
+	CreatedAt    time.Time
+
+	Thread     MessageThread `gorm:"foreignKey:ThreadID"`
+	SenderUser User          `gorm:"foreignKey:SenderUserID"`
 }
 
 type TrendingTopic struct {

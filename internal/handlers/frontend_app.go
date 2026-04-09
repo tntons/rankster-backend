@@ -80,6 +80,19 @@ type frontendMessageView struct {
 	Unread      int              `json:"unread"`
 }
 
+type frontendChatMessageView struct {
+	ID        string `json:"id"`
+	Text      string `json:"text"`
+	Mine      bool   `json:"mine"`
+	Timestamp string `json:"timestamp"`
+}
+
+type frontendMessageThreadDetailView struct {
+	ID       string                    `json:"id"`
+	User     frontendUserView          `json:"user"`
+	Messages []frontendChatMessageView `json:"messages"`
+}
+
 type frontendTrendingTopicView struct {
 	ID               string   `json:"id"`
 	Title            string   `json:"title"`
@@ -97,8 +110,27 @@ type frontendCategoryView struct {
 }
 
 type frontendProfileResponse struct {
-	User     frontendUserView       `json:"user"`
-	Rankings []frontendRankPostView `json:"rankings"`
+	User               frontendUserView              `json:"user"`
+	Rankings           []frontendRankPostView        `json:"rankings"`
+	LikedPosts         []frontendRankPostView        `json:"likedPosts"`
+	PinnedPostID       *string                       `json:"pinnedPostId"`
+	Stats              frontendProfileStatsView      `json:"stats"`
+	FavoriteCategories []frontendProfileCategoryView `json:"favoriteCategories"`
+	IsFollowing        bool                          `json:"isFollowing"`
+}
+
+type frontendProfileStatsView struct {
+	TotalRankings int `json:"totalRankings"`
+	Followers     int `json:"followers"`
+	Following     int `json:"following"`
+	TotalLikes    int `json:"totalLikes"`
+}
+
+type frontendProfileCategoryView struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Emoji string `json:"emoji"`
+	Pct   int    `json:"pct"`
 }
 
 type frontendSearchResponse struct {
@@ -216,13 +248,13 @@ func (h *FrontendHandler) GetProfileMe(c *gin.Context) {
 		return
 	}
 
-	rankings, err := h.rankingsForCreator(user.ID, &user)
+	profile, err := h.buildProfileResponse(user.ID, &user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load profile"})
 		return
 	}
 
-	c.JSON(http.StatusOK, frontendProfileResponse{User: user, Rankings: rankings})
+	c.JSON(http.StatusOK, profile)
 }
 
 func (h *FrontendHandler) GetProfileByUsername(c *gin.Context) {
@@ -242,13 +274,95 @@ func (h *FrontendHandler) GetProfileByUsername(c *gin.Context) {
 	}
 
 	user := buildFrontendUser(userRecord)
-	rankings, err := h.rankingsForCreator(user.ID, authUser)
+	profile, err := h.buildProfileResponse(user.ID, authUser)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load rankings"})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load profile"})
 		return
 	}
 
-	c.JSON(http.StatusOK, frontendProfileResponse{User: user, Rankings: rankings})
+	profile.User = user
+	c.JSON(http.StatusOK, profile)
+}
+
+func (h *FrontendHandler) FollowProfileUser(c *gin.Context) {
+	authUser, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	targetUser, err := h.lookupUserByUsername(c.Param("username"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "USER_NOT_FOUND", "message": "user not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to follow user"})
+		return
+	}
+
+	if err := h.setFollowState(authUser.ID, targetUser.ID, true); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to follow user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"isFollowing": true})
+}
+
+func (h *FrontendHandler) UnfollowProfileUser(c *gin.Context) {
+	authUser, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	targetUser, err := h.lookupUserByUsername(c.Param("username"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "USER_NOT_FOUND", "message": "user not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to unfollow user"})
+		return
+	}
+
+	if err := h.setFollowState(authUser.ID, targetUser.ID, false); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to unfollow user"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"isFollowing": false})
+}
+
+func (h *FrontendHandler) PinProfilePost(c *gin.Context) {
+	authUser, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	postID := c.Param("postId")
+	if err := h.setPinnedPost(authUser.ID, postID, true); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "POST_NOT_FOUND", "message": "post not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to pin post"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"pinnedPostId": postID})
+}
+
+func (h *FrontendHandler) UnpinProfilePost(c *gin.Context) {
+	authUser, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := h.setPinnedPost(authUser.ID, c.Param("postId"), false); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to unpin post"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"pinnedPostId": nil})
 }
 
 func (h *FrontendHandler) SearchOverview(c *gin.Context) {
@@ -306,12 +420,61 @@ func (h *FrontendHandler) GetMessages(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items})
 }
 
+func (h *FrontendHandler) GetMessageThread(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	thread, err := h.messageThreadDetail(user.ID, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "THREAD_NOT_FOUND", "message": "thread not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load conversation"})
+		return
+	}
+
+	c.JSON(http.StatusOK, thread)
+}
+
+func (h *FrontendHandler) PostMessage(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "message text is required"})
+		return
+	}
+
+	message, err := h.createMessage(user.ID, c.Param("id"), strings.TrimSpace(body.Text))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "THREAD_NOT_FOUND", "message": "thread not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to send message"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, message)
+}
+
 func (h *FrontendHandler) GetLeaderboard(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
 	}
 
-	items, err := h.leaderboard()
+	timeframe := strings.TrimSpace(strings.ToLower(c.DefaultQuery("timeframe", "this-week")))
+	category := strings.TrimSpace(strings.ToLower(c.DefaultQuery("category", "all")))
+
+	items, err := h.leaderboard(timeframe, category)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load leaderboard"})
 		return
@@ -499,6 +662,219 @@ func (h *FrontendHandler) rankingsForCreator(creatorID string, authUser *fronten
 	return h.hydrateTierLists(lists, authUser)
 }
 
+func (h *FrontendHandler) buildProfileResponse(profileUserID string, authUser *frontendUserView) (frontendProfileResponse, error) {
+	userRecord, err := h.lookupUserByID(profileUserID)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	user := buildFrontendUser(userRecord)
+	rankings, err := h.rankingsForCreator(profileUserID, authUser)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	likedPosts, err := h.likedRankingsForUser(profileUserID, authUser)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	stats, err := h.userStats(profileUserID)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	favoriteCategories, err := h.favoriteCategoriesForUser(profileUserID)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	pinnedPostID, err := h.pinnedPostIDForUser(profileUserID)
+	if err != nil {
+		return frontendProfileResponse{}, err
+	}
+
+	isFollowing := false
+	if authUser != nil && authUser.ID != profileUserID {
+		isFollowing, err = h.followState(authUser.ID, profileUserID)
+		if err != nil {
+			return frontendProfileResponse{}, err
+		}
+	}
+
+	return frontendProfileResponse{
+		User:         user,
+		Rankings:     rankings,
+		LikedPosts:   likedPosts,
+		PinnedPostID: pinnedPostID,
+		Stats: frontendProfileStatsView{
+			TotalRankings: stats.RanksCreated,
+			Followers:     stats.Followers,
+			Following:     stats.Following,
+			TotalLikes:    stats.LikesReceived,
+		},
+		FavoriteCategories: favoriteCategories,
+		IsFollowing:        isFollowing,
+	}, nil
+}
+
+func (h *FrontendHandler) likedRankingsForUser(userID string, authUser *frontendUserView) ([]frontendRankPostView, error) {
+	var lists []models.TierListPost
+	err := h.db.
+		Joins("JOIN post_likes ON post_likes.post_id = tier_list_posts.post_id").
+		Where("post_likes.user_id = ?", userID).
+		Preload("Post.Creator.Profile").
+		Preload("Post.Creator.Stats").
+		Preload("Post.Category").
+		Preload("Post.Metrics").
+		Preload("CoverAsset").
+		Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("list_position asc") }).
+		Order("post_likes.created_at desc").
+		Find(&lists).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return h.hydrateTierLists(lists, authUser)
+}
+
+func (h *FrontendHandler) favoriteCategoriesForUser(userID string) ([]frontendProfileCategoryView, error) {
+	type categoryCountRow struct {
+		ID    string
+		Name  string
+		Emoji string
+		Count int
+	}
+
+	var rows []categoryCountRow
+	err := h.db.Table("posts").
+		Select("categories.slug AS id, categories.name AS name, COALESCE(categories.emoji, '') AS emoji, COUNT(*) AS count").
+		Joins("JOIN categories ON categories.id = posts.category_id").
+		Where("posts.creator_id = ?", userID).
+		Group("categories.slug, categories.name, categories.emoji").
+		Order("count DESC, categories.name ASC").
+		Limit(4).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	total := 0
+	for _, row := range rows {
+		total += row.Count
+	}
+
+	out := make([]frontendProfileCategoryView, 0, len(rows))
+	for _, row := range rows {
+		pct := 0
+		if total > 0 {
+			pct = int(float64(row.Count) / float64(total) * 100)
+		}
+		out = append(out, frontendProfileCategoryView{
+			ID:    row.ID,
+			Name:  row.Name,
+			Emoji: row.Emoji,
+			Pct:   pct,
+		})
+	}
+	return out, nil
+}
+
+func (h *FrontendHandler) pinnedPostIDForUser(userID string) (*string, error) {
+	var pinned models.PinnedPost
+	err := h.db.Where("user_id = ?", userID).Order("COALESCE(\"order\", 999999) asc, created_at asc").First(&pinned).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &pinned.PostID, nil
+}
+
+func (h *FrontendHandler) followState(followerID, followingID string) (bool, error) {
+	var count int64
+	if err := h.db.Model(&models.Follow{}).
+		Where("follower_id = ? AND following_id = ?", followerID, followingID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldFollow bool) error {
+	if followerID == followingID {
+		return nil
+	}
+
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		var existing models.Follow
+		err := tx.Where("follower_id = ? AND following_id = ?", followerID, followingID).First(&existing).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return err
+		}
+
+		if shouldFollow {
+			if err == nil {
+				return nil
+			}
+			follow := models.Follow{
+				ID:          generateUUID(),
+				FollowerID:  followerID,
+				FollowingID: followingID,
+				CreatedAt:   time.Now(),
+			}
+			if err := tx.Create(&follow).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.UserStats{}).Where("user_id = ?", followerID).
+				Update("following_count", gorm.Expr("following_count + 1")).Error; err != nil {
+				return err
+			}
+			return tx.Model(&models.UserStats{}).Where("user_id = ?", followingID).
+				Update("followers_count", gorm.Expr("followers_count + 1")).Error
+		}
+
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		if err := tx.Delete(&existing).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.UserStats{}).Where("user_id = ?", followerID).
+			Update("following_count", gorm.Expr("GREATEST(following_count - 1, 0)")).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.UserStats{}).Where("user_id = ?", followingID).
+			Update("followers_count", gorm.Expr("GREATEST(followers_count - 1, 0)")).Error
+	})
+}
+
+func (h *FrontendHandler) setPinnedPost(userID, postID string, shouldPin bool) error {
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ?", userID).Delete(&models.PinnedPost{}).Error; err != nil {
+			return err
+		}
+		if !shouldPin {
+			return nil
+		}
+
+		var post models.Post
+		if err := tx.Where("id = ? AND creator_id = ?", postID, userID).First(&post).Error; err != nil {
+			return err
+		}
+
+		pinned := models.PinnedPost{
+			ID:        generateUUID(),
+			UserID:    userID,
+			PostID:    postID,
+			Order:     intPtrValue(1),
+			CreatedAt: time.Now(),
+		}
+		return tx.Create(&pinned).Error
+	})
+}
+
 func (h *FrontendHandler) search(query string) (frontendSearchResponse, error) {
 	categories, err := h.categories(query)
 	if err != nil {
@@ -622,7 +998,75 @@ func (h *FrontendHandler) messagesForUser(userID string) ([]frontendMessageView,
 	return items, nil
 }
 
-func (h *FrontendHandler) leaderboard() ([]frontendLeaderboardEntry, error) {
+func (h *FrontendHandler) messageThreadDetail(userID, threadID string) (frontendMessageThreadDetailView, error) {
+	var thread models.MessageThread
+	err := h.db.
+		Preload("PeerUser.Profile").
+		Preload("PeerUser.Stats").
+		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("created_at asc") }).
+		Where("id = ? AND owner_user_id = ?", threadID, userID).
+		First(&thread).Error
+	if err != nil {
+		return frontendMessageThreadDetailView{}, err
+	}
+
+	messages := make([]frontendChatMessageView, 0, len(thread.Messages))
+	for _, message := range thread.Messages {
+		messages = append(messages, frontendChatMessageView{
+			ID:        message.ID,
+			Text:      message.Body,
+			Mine:      message.SenderUserID == userID,
+			Timestamp: chatTimestamp(message.CreatedAt),
+		})
+	}
+
+	return frontendMessageThreadDetailView{
+		ID:       thread.ID,
+		User:     buildFrontendUser(thread.PeerUser),
+		Messages: messages,
+	}, nil
+}
+
+func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontendChatMessageView, error) {
+	now := time.Now()
+	messageID := generateUUID()
+
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		var thread models.MessageThread
+		if err := tx.Where("id = ? AND owner_user_id = ?", threadID, userID).First(&thread).Error; err != nil {
+			return err
+		}
+
+		message := models.DirectMessage{
+			ID:           messageID,
+			ThreadID:     thread.ID,
+			SenderUserID: userID,
+			Body:         text,
+			CreatedAt:    now,
+		}
+		if err := tx.Create(&message).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&models.MessageThread{}).Where("id = ?", thread.ID).Updates(map[string]any{
+			"last_message": text,
+			"updated_at":   now,
+			"unread_count": 0,
+		}).Error
+	})
+	if err != nil {
+		return frontendChatMessageView{}, err
+	}
+
+	return frontendChatMessageView{
+		ID:        messageID,
+		Text:      text,
+		Mine:      true,
+		Timestamp: "Now",
+	}, nil
+}
+
+func (h *FrontendHandler) leaderboard(timeframe string, category string) ([]frontendLeaderboardEntry, error) {
 	var entries []models.LeaderboardEntry
 	err := h.db.
 		Preload("User.Profile").
@@ -635,12 +1079,24 @@ func (h *FrontendHandler) leaderboard() ([]frontendLeaderboardEntry, error) {
 
 	items := make([]frontendLeaderboardEntry, 0, len(entries))
 	for _, entry := range entries {
+		score := adjustedLeaderboardScore(entry, timeframe, category)
+		change := adjustedLeaderboardChange(entry, timeframe, category)
 		items = append(items, frontendLeaderboardEntry{
 			Rank:   entry.Rank,
 			User:   buildFrontendUser(entry.User),
-			Score:  entry.Score,
-			Change: entry.Change,
+			Score:  score,
+			Change: change,
 		})
+	}
+
+	slices.SortFunc(items, func(a, b frontendLeaderboardEntry) int {
+		if a.Score == b.Score {
+			return strings.Compare(a.User.Username, b.User.Username)
+		}
+		return b.Score - a.Score
+	})
+	for index := range items {
+		items[index].Rank = index + 1
 	}
 	return items, nil
 }
@@ -1062,6 +1518,44 @@ func relativeTime(t time.Time) string {
 	return fmt.Sprintf("%dd ago", int(diff.Hours()/24))
 }
 
+func chatTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("3:04 PM")
+}
+
+func adjustedLeaderboardScore(entry models.LeaderboardEntry, timeframe string, category string) int {
+	score := entry.Score
+
+	switch timeframe {
+	case "this-month":
+		score += 4200 - (entry.Rank * 350)
+	case "all-time":
+		score += 9100 - (entry.Rank * 500)
+	default:
+		score += 1800 - (entry.Rank * 200)
+	}
+
+	if category != "" && category != "all" {
+		score += stableValue(entry.UserID+":"+category) % 6000
+	}
+
+	return max(score, 1)
+}
+
+func adjustedLeaderboardChange(entry models.LeaderboardEntry, timeframe string, category string) string {
+	base := stableValue(entry.UserID + ":" + timeframe + ":" + category)
+	delta := (base % 7) - 3
+	if delta > 0 {
+		return fmt.Sprintf("+%d", delta)
+	}
+	if delta < 0 {
+		return fmt.Sprintf("%d", delta)
+	}
+	return "0"
+}
+
 func assetOrFallback(asset *models.Asset, kind, slug string) string {
 	if asset != nil && strings.TrimSpace(asset.URL) != "" {
 		return asset.URL
@@ -1096,6 +1590,18 @@ func derefString(value *string) string {
 
 func generateUUID() string {
 	return uuid.NewString()
+}
+
+func stableValue(input string) int {
+	total := 0
+	for _, char := range input {
+		total += int(char)
+	}
+	return total
+}
+
+func intPtrValue(value int) *int {
+	return &value
 }
 
 func coalesceEmoji(primary, secondary *string) *string {

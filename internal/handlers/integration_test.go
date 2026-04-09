@@ -132,12 +132,24 @@ func TestProfileMeReturnsUserAndRankings(t *testing.T) {
 		Rankings []struct {
 			ID string `json:"id"`
 		} `json:"rankings"`
+		LikedPosts []struct {
+			ID string `json:"id"`
+		} `json:"likedPosts"`
+		Stats struct {
+			TotalLikes int `json:"totalLikes"`
+		} `json:"stats"`
+		FavoriteCategories []struct {
+			ID string `json:"id"`
+		} `json:"favoriteCategories"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 	if response.User.Username != "me" {
 		t.Fatalf("expected current db user, got %q", response.User.Username)
+	}
+	if len(response.LikedPosts) == 0 || response.Stats.TotalLikes == 0 || len(response.FavoriteCategories) == 0 {
+		t.Fatalf("expected rich profile payload, got %+v", response)
 	}
 }
 
@@ -199,6 +211,155 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	}
 }
 
+func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database)
+
+	token := mockLoginToken(t, router, "me")
+	threadID := firstThreadID(t, router, token)
+
+	req := httptest.NewRequest(http.MethodGet, "/messages/threads/"+threadID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		ID   string `json:"id"`
+		User struct {
+			Username string `json:"username"`
+		} `json:"user"`
+		Messages []struct {
+			Text string `json:"text"`
+			Mine bool   `json:"mine"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.ID == "" || response.User.Username == "" || len(response.Messages) == 0 {
+		t.Fatalf("unexpected thread detail payload: %+v", response)
+	}
+}
+
+func TestPostMessageAppendsConversation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database)
+
+	token := mockLoginToken(t, router, "me")
+	threadID := firstThreadID(t, router, token)
+
+	body := bytes.NewBufferString(`{"text":"Testing from integration suite"}`)
+	req := httptest.NewRequest(http.MethodPost, "/messages/threads/"+threadID+"/messages", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/messages/threads/"+threadID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	var response struct {
+		Messages []struct {
+			Text string `json:"text"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Messages) == 0 || response.Messages[len(response.Messages)-1].Text != "Testing from integration suite" {
+		t.Fatalf("message was not appended: %+v", response.Messages)
+	}
+}
+
+func TestFollowAndUnfollowProfileUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database)
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodPost, "/profile/tierqueen/follow", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("follow status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/profile/tierqueen/follow", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unfollow status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+}
+
+func TestPinAndUnpinProfilePost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database)
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodGet, "/profile/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	var profile struct {
+		Rankings []struct {
+			ID string `json:"id"`
+		} `json:"rankings"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &profile); err != nil {
+		t.Fatalf("decode profile response: %v", err)
+	}
+	if len(profile.Rankings) == 0 {
+		t.Fatalf("expected rankings in profile response")
+	}
+
+	postID := profile.Rankings[0].ID
+	req = httptest.NewRequest(http.MethodPost, "/profile/me/pinned/"+postID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("pin status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/profile/me/pinned/"+postID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unpin status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+}
+
 func mockLoginToken(t *testing.T, router http.Handler, username string) string {
 	t.Helper()
 
@@ -220,4 +381,31 @@ func mockLoginToken(t *testing.T, router http.Handler, username string) string {
 		t.Fatalf("decode login response: %v", err)
 	}
 	return response.AccessToken
+}
+
+func firstThreadID(t *testing.T, router http.Handler, token string) string {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodGet, "/messages/threads", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("thread list status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode threads response: %v", err)
+	}
+	if len(response.Items) == 0 || response.Items[0].ID == "" {
+		t.Fatalf("expected at least one message thread, got %+v", response.Items)
+	}
+	return response.Items[0].ID
 }

@@ -59,6 +59,13 @@ type frontendDemoMessage struct {
 	LastMessage   string
 	Age           time.Duration
 	Unread        int
+	History       []frontendDemoChatMessage
+}
+
+type frontendDemoChatMessage struct {
+	SenderUsername string
+	Text           string
+	Age            time.Duration
 }
 
 type frontendDemoTopic struct {
@@ -376,13 +383,87 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 			AllItems: []frontendDemoTierItem{{ExternalID: "m1", Name: "Elden Ring DLC"}, {ExternalID: "m2", Name: "Balatro"}, {ExternalID: "m3", Name: "Black Myth: Wukong"}, {ExternalID: "m4", Name: "Astro Bot"}, {ExternalID: "m5", Name: "Tekken 8"}, {ExternalID: "m6", Name: "Palworld"}, {ExternalID: "m7", Name: "Senua's Saga"}},
 			Comments: []frontendDemoComment{{Username: "rankmaster99", Text: "Balatro S tier is absolutely based", Age: 5 * time.Hour, Likes: 234}},
 		},
+		{
+			Username: "me", Title: "Albums I Had On Repeat In 2024", CategorySlug: "music", CoverSlug: "albums-on-repeat-2024",
+			Description: "My personal replay-heavy list from 2024. This one is all vibes and zero objectivity.",
+			Tags:        []string{"music", "albums", "2024"}, Likes: 1940, Shares: 288, ParticipantCount: 904, Age: 18 * time.Hour,
+			Tiers: map[string][]frontendDemoTierItem{
+				"S": {{ExternalID: "n1", Name: "GNX - Kendrick"}, {ExternalID: "n2", Name: "Chromakopia - Tyler"}},
+				"A": {{ExternalID: "n3", Name: "Charm - Clairo"}, {ExternalID: "n4", Name: "Cowboy Carter - Beyonce"}},
+				"B": {{ExternalID: "n5", Name: "Hit Me Hard - Billie"}},
+				"C": {{ExternalID: "n6", Name: "Short n Sweet - Sabrina"}},
+				"D": {},
+			},
+			AllItems: []frontendDemoTierItem{{ExternalID: "n1", Name: "GNX - Kendrick"}, {ExternalID: "n2", Name: "Chromakopia - Tyler"}, {ExternalID: "n3", Name: "Charm - Clairo"}, {ExternalID: "n4", Name: "Cowboy Carter - Beyonce"}, {ExternalID: "n5", Name: "Hit Me Hard - Billie"}, {ExternalID: "n6", Name: "Short n Sweet - Sabrina"}},
+			Comments: []frontendDemoComment{{Username: "tierqueen", Text: "Charm in A tier is so real", Age: 7 * time.Hour, Likes: 92}},
+		},
+		{
+			Username: "me", Title: "Games I Couldn't Stop Playing In 2024", CategorySlug: "gaming", CoverSlug: "games-i-couldnt-stop-playing-2024",
+			Description: "Less objective, more obsession. Balatro absolutely consumed my life.",
+			Tags:        []string{"gaming", "2024", "favorites"}, Likes: 2315, Shares: 305, ParticipantCount: 1120, Age: 36 * time.Hour,
+			Tiers: map[string][]frontendDemoTierItem{
+				"S": {{ExternalID: "o1", Name: "Balatro", Emoji: &emojiCard}, {ExternalID: "o2", Name: "Astro Bot"}},
+				"A": {{ExternalID: "o3", Name: "Elden Ring DLC"}, {ExternalID: "o4", Name: "Tekken 8"}},
+				"B": {{ExternalID: "o5", Name: "Metaphor: ReFantazio"}},
+				"C": {{ExternalID: "o6", Name: "Palworld"}},
+				"D": {},
+			},
+			AllItems: []frontendDemoTierItem{{ExternalID: "o1", Name: "Balatro"}, {ExternalID: "o2", Name: "Astro Bot"}, {ExternalID: "o3", Name: "Elden Ring DLC"}, {ExternalID: "o4", Name: "Tekken 8"}, {ExternalID: "o5", Name: "Metaphor: ReFantazio"}, {ExternalID: "o6", Name: "Palworld"}},
+			Comments: []frontendDemoComment{{Username: "rankmaster99", Text: "Balatro at S is the only truth", Age: 9 * time.Hour, Likes: 144}},
+		},
 	}
 
 	messages := []frontendDemoMessage{
-		{OwnerUsername: "me", PeerUsername: "animequeen", LastMessage: "Your NBA tier list is so wrong lmaoo", Age: 2 * time.Minute, Unread: 3},
-		{OwnerUsername: "me", PeerUsername: "tierqueen", LastMessage: "omg same taste in anime!!", Age: 15 * time.Minute, Unread: 1},
-		{OwnerUsername: "me", PeerUsername: "rankmaster99", LastMessage: "Can you rank coffee shops next?", Age: 1 * time.Hour, Unread: 0},
-		{OwnerUsername: "me", PeerUsername: "drip_scholar", LastMessage: "The collab tier list is live!", Age: 3 * time.Hour, Unread: 0},
+		{
+			OwnerUsername: "me",
+			PeerUsername:  "animequeen",
+			LastMessage:   "Your NBA tier list is so wrong lmaoo 😭",
+			Age:           2 * time.Minute,
+			Unread:        3,
+			History: []frontendDemoChatMessage{
+				{SenderUsername: "animequeen", Text: "Your NBA tier list is so wrong lmaoo 😭", Age: 8 * time.Minute},
+				{SenderUsername: "animequeen", Text: "Curry in C is disrespectful??", Age: 7 * time.Minute},
+				{SenderUsername: "me", Text: "He's past his prime, I stand by it 😅", Age: 5 * time.Minute},
+				{SenderUsername: "animequeen", Text: "Absolute crime. Anyway check my new anime tier list!", Age: 4 * time.Minute},
+				{SenderUsername: "me", Text: "omg Frieren S tier?? finally someone with taste", Age: 2 * time.Minute},
+			},
+		},
+		{
+			OwnerUsername: "me",
+			PeerUsername:  "tierqueen",
+			LastMessage:   "omg same taste in anime!! ✨",
+			Age:           15 * time.Minute,
+			Unread:        1,
+			History: []frontendDemoChatMessage{
+				{SenderUsername: "tierqueen", Text: "Your winter anime ranking is basically perfect.", Age: 45 * time.Minute},
+				{SenderUsername: "me", Text: "You get it. Frieren supremacy.", Age: 35 * time.Minute},
+				{SenderUsername: "tierqueen", Text: "omg same taste in anime!! ✨", Age: 15 * time.Minute},
+			},
+		},
+		{
+			OwnerUsername: "me",
+			PeerUsername:  "rankmaster99",
+			LastMessage:   "Can you rank coffee shops next?",
+			Age:           1 * time.Hour,
+			Unread:        0,
+			History: []frontendDemoChatMessage{
+				{SenderUsername: "me", Text: "Your NBA comments section is on fire today.", Age: 95 * time.Minute},
+				{SenderUsername: "rankmaster99", Text: "As it should be. I speak truth.", Age: 75 * time.Minute},
+				{SenderUsername: "rankmaster99", Text: "Can you rank coffee shops next?", Age: 1 * time.Hour},
+			},
+		},
+		{
+			OwnerUsername: "me",
+			PeerUsername:  "drip_scholar",
+			LastMessage:   "The collab tier list is live!",
+			Age:           3 * time.Hour,
+			Unread:        0,
+			History: []frontendDemoChatMessage{
+				{SenderUsername: "drip_scholar", Text: "We need a fashion x music collab list.", Age: 5 * time.Hour},
+				{SenderUsername: "me", Text: "Say less, I'll set it up.", Age: 4 * time.Hour},
+				{SenderUsername: "me", Text: "The collab tier list is live!", Age: 3 * time.Hour},
+			},
+		},
 	}
 
 	topics := []frontendDemoTopic{
@@ -420,6 +501,9 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 			categoryIDs[seed.Slug] = categoryID
 		}
 
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.DirectMessage{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("owner_user_id IN ?", valuesOf(userIDs)).Delete(&models.MessageThread{}).Error; err != nil {
 			return err
 		}
@@ -440,8 +524,9 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 		}
 
 		for _, seed := range messages {
+			threadID := uuid.NewString()
 			thread := models.MessageThread{
-				ID:          uuid.NewString(),
+				ID:          threadID,
 				OwnerUserID: userIDs[seed.OwnerUsername],
 				PeerUserID:  userIDs[seed.PeerUsername],
 				LastMessage: seed.LastMessage,
@@ -451,6 +536,18 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 			}
 			if err := tx.Create(&thread).Error; err != nil {
 				return err
+			}
+			for _, chat := range seed.History {
+				message := models.DirectMessage{
+					ID:           uuid.NewString(),
+					ThreadID:     threadID,
+					SenderUserID: userIDs[chat.SenderUsername],
+					Body:         chat.Text,
+					CreatedAt:    now.Add(-chat.Age),
+				}
+				if err := tx.Create(&message).Error; err != nil {
+					return err
+				}
 			}
 		}
 

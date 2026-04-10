@@ -8,18 +8,22 @@ import (
 )
 
 type Config struct {
-	DatabaseURL   string
-	Host          string
-	Port          string
-	PublicBaseURL string
+	DatabaseURL     string
+	Host            string
+	Port            string
+	PublicBaseURL   string
+	GoogleClientID  string
+	AuthTokenSecret string
 }
 
 func Load() Config {
 	return Config{
-		DatabaseURL:   getEnv("DATABASE_URL", defaultDatabaseURL()),
-		Host:          getEnv("HOST", "0.0.0.0"),
-		Port:          getEnv("PORT", "8000"),
-		PublicBaseURL: getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
+		DatabaseURL:     getEnv("DATABASE_URL", defaultDatabaseURL()),
+		Host:            getEnv("HOST", "0.0.0.0"),
+		Port:            getEnv("PORT", "8000"),
+		PublicBaseURL:   getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
+		GoogleClientID:  getEnv("GOOGLE_CLIENT_ID", ""),
+		AuthTokenSecret: getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
 	}
 }
 

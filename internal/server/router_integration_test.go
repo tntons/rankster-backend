@@ -60,4 +60,7 @@ func TestBuildRouterHandlesDevCORSPreflight(t *testing.T) {
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
 		t.Fatalf("allow-origin = %q, want localhost origin", got)
 	}
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodDelete) {
+		t.Fatalf("allow-methods = %q, want DELETE included", got)
+	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"rankster-backend/internal/config"
 	"rankster-backend/internal/server"
 	"rankster-backend/internal/testutil"
 )
@@ -18,7 +19,7 @@ func TestMockLoginReturnsBearerSession(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	body := bytes.NewBufferString(`{"username":"me"}`)
 	req := httptest.NewRequest(http.MethodPost, "/auth/mock-login", body)
@@ -52,7 +53,7 @@ func TestFeedMainReturnsDatabaseRankPosts(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/feed/main?limit=2", nil)
 	req.Header.Set("Host", "localhost:8000")
@@ -93,7 +94,7 @@ func TestProfileMeRequiresAuth(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/profile/me", nil)
 	recorder := httptest.NewRecorder()
@@ -110,7 +111,7 @@ func TestProfileMeReturnsUserAndRankings(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 
@@ -158,7 +159,7 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 
@@ -216,7 +217,7 @@ func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 	threadID := firstThreadID(t, router, token)
@@ -254,7 +255,7 @@ func TestPostMessageAppendsConversation(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 	threadID := firstThreadID(t, router, token)
@@ -295,7 +296,7 @@ func TestFollowAndUnfollowProfileUser(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 
@@ -321,7 +322,7 @@ func TestPinAndUnpinProfilePost(t *testing.T) {
 
 	database := testutil.NewTestDatabase(t)
 	router := server.BuildRouter(database)
-	RegisterRoutes(router, database)
+	RegisterRoutes(router, database, testConfig())
 
 	token := mockLoginToken(t, router, "me")
 
@@ -408,4 +409,11 @@ func firstThreadID(t *testing.T, router http.Handler, token string) string {
 		t.Fatalf("expected at least one message thread, got %+v", response.Items)
 	}
 	return response.Items[0].ID
+}
+
+func testConfig() config.Config {
+	return config.Config{
+		PublicBaseURL:   "http://localhost:8000",
+		AuthTokenSecret: "test-auth-secret",
+	}
 }

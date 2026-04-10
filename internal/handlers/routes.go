@@ -3,12 +3,15 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+
+	"rankster-backend/internal/config"
 )
 
-func RegisterRoutes(router *gin.Engine, db *gorm.DB) {
-	frontendHandler := NewFrontendHandler(db)
+func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
+	frontendHandler := NewFrontendHandler(db, cfg)
 
 	router.POST("/auth/mock-login", frontendHandler.MockLogin)
+	router.POST("/auth/google", frontendHandler.GoogleLogin)
 	router.GET("/auth/me", frontendHandler.GetAuthMe)
 
 	router.GET("/feed/main", frontendHandler.GetMainFeed)

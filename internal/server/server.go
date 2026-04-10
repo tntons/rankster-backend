@@ -52,7 +52,7 @@ func writeDevCORSHeaders(c *gin.Context) {
 	c.Header("Access-Control-Allow-Origin", origin)
 	c.Header("Vary", "Origin")
 	c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept")
-	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 }
 
 func isAllowedDevOrigin(origin string) bool {

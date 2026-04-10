@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/joho/godotenv"
+
 	"rankster-backend/internal/config"
 	"rankster-backend/internal/db"
 	"rankster-backend/internal/handlers"
@@ -12,6 +14,8 @@ import (
 )
 
 func main() {
+	_ = godotenv.Load(".env.local", ".env")
+
 	cfg := config.Load()
 
 	database, err := db.Connect(cfg.DatabaseURL)
@@ -24,7 +28,7 @@ func main() {
 	log.Printf("database connected: %s", cfg.DatabaseURL)
 
 	router := server.BuildRouter(database)
-	handlers.RegisterRoutes(router, database)
+	handlers.RegisterRoutes(router, database, cfg)
 
 	addr := cfg.Host + ":" + cfg.Port
 	srv := &http.Server{

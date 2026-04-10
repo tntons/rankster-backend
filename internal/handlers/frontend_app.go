@@ -98,6 +98,7 @@ type frontendMessageThreadDetailView struct {
 
 type frontendTrendingTopicView struct {
 	ID               string   `json:"id"`
+	PostID           *string  `json:"postId,omitempty"`
 	Title            string   `json:"title"`
 	Category         string   `json:"category"`
 	CoverImage       string   `json:"coverImage"`
@@ -1216,7 +1217,7 @@ func (h *FrontendHandler) trendingTopics() ([]frontendTrendingTopicView, error) 
 
 func (h *FrontendHandler) trendingTopicsFiltered(query string, limit int) ([]frontendTrendingTopicView, error) {
 	var topics []models.TrendingTopic
-	db := h.db.Preload("Category").Preload("CoverAsset").Order("participant_count desc")
+	db := h.db.Preload("Category").Preload("CoverAsset").Preload("SourcePost").Order("participant_count desc")
 	if query != "" {
 		like := "%" + query + "%"
 		db = db.Where("LOWER(title) LIKE ? OR EXISTS (SELECT 1 FROM unnest(tags) tag WHERE LOWER(tag) LIKE ?)", like, like)
@@ -1232,6 +1233,7 @@ func (h *FrontendHandler) trendingTopicsFiltered(query string, limit int) ([]fro
 	for _, topic := range topics {
 		items = append(items, frontendTrendingTopicView{
 			ID:               topic.ID,
+			PostID:           topic.SourcePostID,
 			Title:            topic.Title,
 			Category:         topic.Category.Slug,
 			CoverImage:       assetOrFallback(topic.CoverAsset, "ranks", slugify(topic.Title)),
@@ -1405,16 +1407,16 @@ func (h *FrontendHandler) leaderboard(timeframe string, category string) ([]fron
 }
 
 func (h *FrontendHandler) postByID(postID string, authUser *frontendUserView) (frontendRankPostView, error) {
-	var list models.TierListPost
-	err := h.db.
-		Preload("Post.Creator.Profile").
-		Preload("Post.Creator.Stats").
-		Preload("Post.Category").
-		Preload("Post.Metrics").
-		Preload("CoverAsset").
-		Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("list_position asc") }).
-		Where("post_id = ?", postID).
-		First(&list).Error
+	list, err := h.lookupTierListPost(postID)
+	if err != nil && errors.Is(err, gorm.ErrRecordNotFound) {
+		resolvedPostID, resolveErr := h.resolveTrendingTopicPostID(postID)
+		if resolveErr != nil {
+			return frontendRankPostView{}, resolveErr
+		}
+		if resolvedPostID != nil {
+			list, err = h.lookupTierListPost(*resolvedPostID)
+		}
+	}
 	if err != nil {
 		return frontendRankPostView{}, err
 	}
@@ -1427,6 +1429,32 @@ func (h *FrontendHandler) postByID(postID string, authUser *frontendUserView) (f
 		return frontendRankPostView{}, gorm.ErrRecordNotFound
 	}
 	return items[0], nil
+}
+
+func (h *FrontendHandler) lookupTierListPost(postID string) (models.TierListPost, error) {
+	var list models.TierListPost
+	err := h.db.
+		Preload("Post.Creator.Profile").
+		Preload("Post.Creator.Stats").
+		Preload("Post.Category").
+		Preload("Post.Metrics").
+		Preload("CoverAsset").
+		Preload("Items", func(db *gorm.DB) *gorm.DB { return db.Order("list_position asc") }).
+		Where("post_id = ?", postID).
+		First(&list).Error
+	return list, err
+}
+
+func (h *FrontendHandler) resolveTrendingTopicPostID(topicID string) (*string, error) {
+	var topic models.TrendingTopic
+	err := h.db.Where("id = ?", topicID).First(&topic).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return topic.SourcePostID, nil
 }
 
 func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateRankRequest) (frontendRankPostView, error) {

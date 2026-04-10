@@ -304,6 +304,7 @@ type TrendingTopic struct {
 	Title            string
 	CategoryID       string  `gorm:"type:uuid;index"`
 	CoverAssetID     *string `gorm:"type:uuid;index"`
+	SourcePostID     *string `gorm:"type:uuid;index"`
 	ParticipantCount int
 	Tags             pq.StringArray `gorm:"type:text[]"`
 	CreatedAt        time.Time
@@ -311,6 +312,7 @@ type TrendingTopic struct {
 
 	Category   Category `gorm:"foreignKey:CategoryID"`
 	CoverAsset *Asset   `gorm:"foreignKey:CoverAssetID"`
+	SourcePost *Post    `gorm:"foreignKey:SourcePostID"`
 }
 
 type LeaderboardEntry struct {

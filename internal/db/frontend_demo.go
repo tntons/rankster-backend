@@ -72,6 +72,7 @@ type frontendDemoTopic struct {
 	Title            string
 	CategorySlug     string
 	CoverSlug        string
+	SourcePostTitle  string
 	ParticipantCount int
 	Tags             []string
 }
@@ -467,11 +468,11 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 	}
 
 	topics := []frontendDemoTopic{
-		{Title: "Best Anime of Winter 2025", CategorySlug: "anime", CoverSlug: "anime-winter-2025", ParticipantCount: 12847, Tags: []string{"anime", "winter2025"}},
-		{Title: "Pizza Toppings Ranking", CategorySlug: "food", CoverSlug: "pizza-toppings", ParticipantCount: 48231, Tags: []string{"food", "pizza"}},
-		{Title: "NBA All-Stars 2025", CategorySlug: "sports", CoverSlug: "nba-players-2025", ParticipantCount: 89012, Tags: []string{"nba", "basketball"}},
-		{Title: "Best Albums of 2024", CategorySlug: "music", CoverSlug: "hiphop-albums-2024", ParticipantCount: 31456, Tags: []string{"music", "2024"}},
-		{Title: "Video Games GOTY 2024", CategorySlug: "gaming", CoverSlug: "games-2024", ParticipantCount: 67890, Tags: []string{"gaming", "goty"}},
+		{Title: "Best Anime of Winter 2025", CategorySlug: "anime", CoverSlug: "anime-winter-2025", SourcePostTitle: "Best Anime of Winter 2025", ParticipantCount: 12847, Tags: []string{"anime", "winter2025"}},
+		{Title: "Pizza Toppings Ranking", CategorySlug: "food", CoverSlug: "pizza-toppings", SourcePostTitle: "Pizza Toppings Definitive Ranking", ParticipantCount: 48231, Tags: []string{"food", "pizza"}},
+		{Title: "NBA All-Stars 2025", CategorySlug: "sports", CoverSlug: "nba-players-2025", SourcePostTitle: "NBA Players 2024-25 Season", ParticipantCount: 89012, Tags: []string{"nba", "basketball"}},
+		{Title: "Best Albums of 2024", CategorySlug: "music", CoverSlug: "hiphop-albums-2024", SourcePostTitle: "2024 Hip-Hop Albums", ParticipantCount: 31456, Tags: []string{"music", "2024"}},
+		{Title: "Video Games GOTY 2024", CategorySlug: "gaming", CoverSlug: "games-2024", SourcePostTitle: "Best Video Games of 2024", ParticipantCount: 67890, Tags: []string{"gaming", "goty"}},
 	}
 
 	leaderboard := []frontendDemoLeaderboardEntry{
@@ -782,8 +783,6 @@ func upsertTrendingTopic(tx *gorm.DB, baseURL string, now time.Time, seed fronte
 	var existing models.TrendingTopic
 	if err := tx.Where("title = ?", seed.Title).First(&existing).Error; err != nil && err != gorm.ErrRecordNotFound {
 		return err
-	} else if err == nil {
-		return nil
 	}
 
 	coverAssetID, err := ensureAsset(tx, fmt.Sprintf("%s/assets/ranks/%s.svg", baseURL, seed.CoverSlug), now)
@@ -791,17 +790,54 @@ func upsertTrendingTopic(tx *gorm.DB, baseURL string, now time.Time, seed fronte
 		return err
 	}
 
+	sourcePostID, err := resolveTrendingTopicSourcePostID(tx, seed)
+	if err != nil {
+		return err
+	}
+
+	if existing.ID != "" {
+		return tx.Model(&models.TrendingTopic{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			"category_id":       categoryIDs[seed.CategorySlug],
+			"cover_asset_id":    coverAssetID,
+			"source_post_id":    sourcePostID,
+			"participant_count": seed.ParticipantCount,
+			"tags":              pq.StringArray(seed.Tags),
+			"updated_at":        now,
+		}).Error
+	}
+
 	topic := models.TrendingTopic{
 		ID:               uuid.NewString(),
 		Title:            seed.Title,
 		CategoryID:       categoryIDs[seed.CategorySlug],
 		CoverAssetID:     &coverAssetID,
+		SourcePostID:     sourcePostID,
 		ParticipantCount: seed.ParticipantCount,
 		Tags:             pq.StringArray(seed.Tags),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 	return tx.Create(&topic).Error
+}
+
+func resolveTrendingTopicSourcePostID(tx *gorm.DB, seed frontendDemoTopic) (*string, error) {
+	title := strings.TrimSpace(seed.SourcePostTitle)
+	if title == "" {
+		title = strings.TrimSpace(seed.Title)
+	}
+	if title == "" {
+		return nil, nil
+	}
+
+	var list models.TierListPost
+	err := tx.Where("title = ?", title).First(&list).Error
+	if err == nil {
+		return &list.PostID, nil
+	}
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return nil, err
 }
 
 func ensureAsset(tx *gorm.DB, url string, createdAt time.Time) (string, error) {

@@ -376,6 +376,68 @@ func TestFollowAndUnfollowProfileUser(t *testing.T) {
 	}
 }
 
+func TestNotificationsListAndMarkRead(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodGet, "/notifications", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("notifications status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		UnreadCount int `json:"unreadCount"`
+		Items       []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+			Read  bool   `json:"read"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode notifications response: %v", err)
+	}
+	if response.UnreadCount == 0 || len(response.Items) == 0 || response.Items[0].ID == "" || response.Items[0].Title == "" {
+		t.Fatalf("unexpected notifications response: %+v", response)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/notifications/"+response.Items[0].ID+"/read", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("mark read status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/notifications/read-all", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("mark all read status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var updated struct {
+		UnreadCount int `json:"unreadCount"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode mark all response: %v", err)
+	}
+	if updated.UnreadCount != 0 {
+		t.Fatalf("unreadCount = %d, want 0", updated.UnreadCount)
+	}
+}
+
 func TestPinAndUnpinProfilePost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

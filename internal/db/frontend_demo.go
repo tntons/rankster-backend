@@ -92,6 +92,17 @@ type frontendDemoLeaderboardEntry struct {
 	Change   string
 }
 
+type frontendDemoNotification struct {
+	Username      string
+	ActorUsername *string
+	Type          string
+	Title         string
+	Body          string
+	ActionHref    string
+	Age           time.Duration
+	Read          bool
+}
+
 func seedBaseDemo(database *gorm.DB, publicBaseURL string) error {
 	now := time.Now()
 
@@ -483,6 +494,13 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 		{Username: "me", Rank: 5, Score: 28901, Change: "-2"},
 	}
 
+	notifications := []frontendDemoNotification{
+		{Username: "me", ActorUsername: stringPtr("animequeen"), Type: "comment", Title: "New comment", Body: "Yuki commented on your NBA tier list.", ActionHref: "/profile/animequeen", Age: 5 * time.Minute},
+		{Username: "me", ActorUsername: stringPtr("tierqueen"), Type: "follow", Title: "New follower", Body: "Sophia started following you.", ActionHref: "/profile/tierqueen", Age: 22 * time.Minute},
+		{Username: "me", ActorUsername: stringPtr("rankmaster99"), Type: "rank", Title: "Ranking activity", Body: "Jordan wants you to rank coffee shops next.", ActionHref: "/dm", Age: 1 * time.Hour, Read: true},
+		{Username: "rankmaster99", ActorUsername: stringPtr("me"), Type: "message", Title: "New message", Body: "Alex sent you a direct message.", ActionHref: "/dm", Age: 8 * time.Minute},
+	}
+
 	return database.Transaction(func(tx *gorm.DB) error {
 		userIDs := map[string]string{}
 		for _, seed := range users {
@@ -509,6 +527,9 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 			return err
 		}
 		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&models.LeaderboardEntry{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id IN ?", valuesOf(userIDs)).Delete(&models.Notification{}).Error; err != nil {
 			return err
 		}
 
@@ -544,6 +565,29 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 				UpdatedAt: now,
 			}
 			if err := tx.Create(&entry).Error; err != nil {
+				return err
+			}
+		}
+
+		for _, seed := range notifications {
+			notification := models.Notification{
+				ID:         uuid.NewString(),
+				UserID:     userIDs[seed.Username],
+				Type:       seed.Type,
+				Title:      seed.Title,
+				Body:       seed.Body,
+				ActionHref: seed.ActionHref,
+				CreatedAt:  now.Add(-seed.Age),
+			}
+			if seed.ActorUsername != nil {
+				actorID := userIDs[*seed.ActorUsername]
+				notification.ActorUserID = &actorID
+			}
+			if seed.Read {
+				readAt := now.Add(-seed.Age / 2)
+				notification.ReadAt = &readAt
+			}
+			if err := tx.Create(&notification).Error; err != nil {
 				return err
 			}
 		}

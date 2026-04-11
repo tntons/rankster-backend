@@ -115,6 +115,22 @@ type frontendMessageThreadDetailView struct {
 	Messages []frontendChatMessageView `json:"messages"`
 }
 
+type frontendNotificationView struct {
+	ID        string            `json:"id"`
+	Type      string            `json:"type"`
+	Title     string            `json:"title"`
+	Body      string            `json:"body"`
+	Actor     *frontendUserView `json:"actor,omitempty"`
+	Href      string            `json:"href"`
+	CreatedAt string            `json:"createdAt"`
+	Read      bool              `json:"read"`
+}
+
+type frontendNotificationsResponse struct {
+	Items       []frontendNotificationView `json:"items"`
+	UnreadCount int                        `json:"unreadCount"`
+}
+
 type frontendCreatedMessage struct {
 	Sender            frontendChatMessageView
 	Recipient         *frontendChatMessageView
@@ -463,8 +479,16 @@ func (h *FrontendHandler) FollowProfileUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.setFollowState(authUser.ID, targetUser.ID, true); err != nil {
+	changed, err := h.setFollowState(authUser.ID, targetUser.ID, true)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to follow user"})
+		return
+	}
+	if changed {
+		err = h.createNotification(h.db, targetUser.ID, &authUser.ID, "follow", "New follower", fmt.Sprintf("%s started following you.", authUser.DisplayName), "/profile/"+authUser.Username, time.Now())
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to create notification"})
 		return
 	}
 
@@ -487,7 +511,7 @@ func (h *FrontendHandler) UnfollowProfileUser(c *gin.Context) {
 		return
 	}
 
-	if err := h.setFollowState(authUser.ID, targetUser.ID, false); err != nil {
+	if _, err := h.setFollowState(authUser.ID, targetUser.ID, false); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to unfollow user"})
 		return
 	}
@@ -628,6 +652,60 @@ func (h *FrontendHandler) PostMessage(c *gin.Context) {
 
 	h.broadcastCreatedMessage(c.Param("id"), created)
 	c.JSON(http.StatusCreated, created.Sender)
+}
+
+func (h *FrontendHandler) GetNotifications(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	response, err := h.notificationsForUser(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load notifications"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *FrontendHandler) MarkNotificationRead(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	notification, err := h.markNotificationRead(user.ID, c.Param("id"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "NOTIFICATION_NOT_FOUND", "message": "notification not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to mark notification as read"})
+		return
+	}
+
+	c.JSON(http.StatusOK, notification)
+}
+
+func (h *FrontendHandler) MarkAllNotificationsRead(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := h.markAllNotificationsRead(user.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to mark notifications as read"})
+		return
+	}
+
+	response, err := h.notificationsForUser(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load notifications"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *FrontendHandler) GetLeaderboard(c *gin.Context) {
@@ -1135,12 +1213,13 @@ func (h *FrontendHandler) followState(followerID, followingID string) (bool, err
 	return count > 0, nil
 }
 
-func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldFollow bool) error {
+func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldFollow bool) (bool, error) {
 	if followerID == followingID {
-		return nil
+		return false, nil
 	}
 
-	return h.db.Transaction(func(tx *gorm.DB) error {
+	changed := false
+	err := h.db.Transaction(func(tx *gorm.DB) error {
 		var existing models.Follow
 		err := tx.Where("follower_id = ? AND following_id = ?", followerID, followingID).First(&existing).Error
 		if err != nil && err != gorm.ErrRecordNotFound {
@@ -1151,6 +1230,7 @@ func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldF
 			if err == nil {
 				return nil
 			}
+			changed = true
 			follow := models.Follow{
 				ID:          generateUUID(),
 				FollowerID:  followerID,
@@ -1171,6 +1251,7 @@ func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldF
 		if err == gorm.ErrRecordNotFound {
 			return nil
 		}
+		changed = true
 		if err := tx.Delete(&existing).Error; err != nil {
 			return err
 		}
@@ -1181,6 +1262,7 @@ func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldF
 		return tx.Model(&models.UserStats{}).Where("user_id = ?", followingID).
 			Update("followers_count", gorm.Expr("GREATEST(followers_count - 1, 0)")).Error
 	})
+	return changed, err
 }
 
 func (h *FrontendHandler) setPinnedPost(userID, postID string, shouldPin bool) error {
@@ -1426,7 +1508,11 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 			Body:         text,
 			CreatedAt:    now,
 		}
-		return tx.Create(&peerMessage).Error
+		if err := tx.Create(&peerMessage).Error; err != nil {
+			return err
+		}
+
+		return h.createNotification(tx, thread.PeerUserID, &userID, "message", "New message", "You have a new direct message.", "/dm", now)
 	})
 	if err != nil {
 		return frontendCreatedMessage{}, err
@@ -1450,6 +1536,85 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 		Recipient:         &recipientMessage,
 		RecipientThreadID: recipientThreadID,
 	}, nil
+}
+
+func (h *FrontendHandler) notificationsForUser(userID string) (frontendNotificationsResponse, error) {
+	var notifications []models.Notification
+	if err := h.db.
+		Preload("ActorUser.Profile").
+		Preload("ActorUser.Stats").
+		Where("user_id = ?", userID).
+		Order("created_at desc").
+		Limit(50).
+		Find(&notifications).Error; err != nil {
+		return frontendNotificationsResponse{}, err
+	}
+
+	var unreadCount int64
+	if err := h.db.Model(&models.Notification{}).
+		Where("user_id = ? AND read_at IS NULL", userID).
+		Count(&unreadCount).Error; err != nil {
+		return frontendNotificationsResponse{}, err
+	}
+
+	items := make([]frontendNotificationView, 0, len(notifications))
+	for _, notification := range notifications {
+		items = append(items, buildFrontendNotification(notification))
+	}
+
+	return frontendNotificationsResponse{
+		Items:       items,
+		UnreadCount: int(unreadCount),
+	}, nil
+}
+
+func (h *FrontendHandler) markNotificationRead(userID, notificationID string) (frontendNotificationView, error) {
+	now := time.Now()
+	result := h.db.Model(&models.Notification{}).
+		Where("id = ? AND user_id = ?", notificationID, userID).
+		Update("read_at", &now)
+	if result.Error != nil {
+		return frontendNotificationView{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return frontendNotificationView{}, gorm.ErrRecordNotFound
+	}
+
+	var notification models.Notification
+	if err := h.db.
+		Preload("ActorUser.Profile").
+		Preload("ActorUser.Stats").
+		Where("id = ? AND user_id = ?", notificationID, userID).
+		First(&notification).Error; err != nil {
+		return frontendNotificationView{}, err
+	}
+
+	return buildFrontendNotification(notification), nil
+}
+
+func (h *FrontendHandler) markAllNotificationsRead(userID string) error {
+	now := time.Now()
+	return h.db.Model(&models.Notification{}).
+		Where("user_id = ? AND read_at IS NULL", userID).
+		Update("read_at", &now).Error
+}
+
+func (h *FrontendHandler) createNotification(tx *gorm.DB, userID string, actorUserID *string, notificationType string, title string, body string, actionHref string, createdAt time.Time) error {
+	if actorUserID != nil && *actorUserID == userID {
+		return nil
+	}
+
+	notification := models.Notification{
+		ID:          generateUUID(),
+		UserID:      userID,
+		ActorUserID: actorUserID,
+		Type:        notificationType,
+		Title:       title,
+		Body:        body,
+		ActionHref:  actionHref,
+		CreatedAt:   createdAt,
+	}
+	return tx.Create(&notification).Error
 }
 
 func (h *FrontendHandler) leaderboard(timeframe string, category string) ([]frontendLeaderboardEntry, error) {
@@ -1842,6 +2007,27 @@ func buildFrontendUser(user models.User) frontendUserView {
 		Following:     stats.FollowingCount,
 		TotalRankings: stats.RanksCreatedCount,
 		Verified:      profile.Verified,
+	}
+}
+
+func buildFrontendNotification(notification models.Notification) frontendNotificationView {
+	var actor *frontendUserView
+	if notification.ActorUser != nil {
+		view := buildFrontendUser(*notification.ActorUser)
+		if view.ID != "" {
+			actor = &view
+		}
+	}
+
+	return frontendNotificationView{
+		ID:        notification.ID,
+		Type:      notification.Type,
+		Title:     notification.Title,
+		Body:      notification.Body,
+		Actor:     actor,
+		Href:      notification.ActionHref,
+		CreatedAt: relativeTime(notification.CreatedAt),
+		Read:      notification.ReadAt != nil,
 	}
 }
 

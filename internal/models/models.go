@@ -299,6 +299,21 @@ type DirectMessage struct {
 	SenderUser User          `gorm:"foreignKey:SenderUserID"`
 }
 
+type Notification struct {
+	ID          string  `gorm:"type:uuid;primaryKey"`
+	UserID      string  `gorm:"type:uuid;index"`
+	ActorUserID *string `gorm:"type:uuid;index"`
+	Type        string  `gorm:"index"`
+	Title       string
+	Body        string
+	ActionHref  string
+	ReadAt      *time.Time
+	CreatedAt   time.Time
+
+	User      User  `gorm:"foreignKey:UserID"`
+	ActorUser *User `gorm:"foreignKey:ActorUserID"`
+}
+
 type TrendingTopic struct {
 	ID               string `gorm:"type:uuid;primaryKey"`
 	Title            string

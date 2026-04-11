@@ -7,10 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"gorm.io/gorm"
-
-	"rankster-backend/internal/auth"
 )
 
 const chatSocketBufferSize = 16
@@ -18,6 +15,54 @@ const chatSocketBufferSize = 16
 func newFrontendChatHub() *frontendChatHub {
 	return &frontendChatHub{
 		clients: map[string]map[*frontendChatClient]struct{}{},
+	}
+}
+
+func newFrontendMessageInboxHub() *frontendMessageInboxHub {
+	return &frontendMessageInboxHub{
+		clients: map[string]map[*frontendMessageInboxClient]struct{}{},
+	}
+}
+
+func (hub *frontendMessageInboxHub) subscribe(userID string) (*frontendMessageInboxClient, func()) {
+	client := &frontendMessageInboxClient{
+		userID: userID,
+		send:   make(chan frontendMessageInboxSocketEvent, chatSocketBufferSize),
+	}
+
+	hub.mu.Lock()
+	if hub.clients[userID] == nil {
+		hub.clients[userID] = map[*frontendMessageInboxClient]struct{}{}
+	}
+	hub.clients[userID][client] = struct{}{}
+	hub.mu.Unlock()
+
+	unsubscribe := func() {
+		hub.mu.Lock()
+		if clients := hub.clients[userID]; clients != nil {
+			if _, ok := clients[client]; ok {
+				delete(clients, client)
+				close(client.send)
+			}
+			if len(clients) == 0 {
+				delete(hub.clients, userID)
+			}
+		}
+		hub.mu.Unlock()
+	}
+
+	return client, unsubscribe
+}
+
+func (hub *frontendMessageInboxHub) broadcast(userID string, event frontendMessageInboxSocketEvent) {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+
+	for client := range hub.clients[userID] {
+		select {
+		case client.send <- event:
+		default:
+		}
 	}
 }
 
@@ -63,21 +108,64 @@ func (hub *frontendChatHub) broadcast(threadID string, event frontendChatSocketE
 	}
 }
 
+func (hub *frontendChatHub) hasSubscribers(threadID string) bool {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return len(hub.clients[threadID]) > 0
+}
+
+func (h *FrontendHandler) WebSocketMessageInbox(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.userFromSocketToken(c)
+	if !ok {
+		return
+	}
+
+	upgrader := frontendSocketUpgrader()
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	client, unsubscribe := h.messageInboxHub.subscribe(user.ID)
+	defer unsubscribe()
+
+	go func() {
+		for event := range client.send {
+			if err := conn.WriteJSON(event); err != nil {
+				return
+			}
+		}
+	}()
+
+	unreadCount, err := h.messageUnreadCount(user.ID)
+	if err != nil {
+		unreadCount = 0
+	}
+	client.send <- frontendMessageInboxSocketEvent{
+		Type:        "ready",
+		UnreadCount: unreadCount,
+		Timestamp:   time.Now().Format(time.RFC3339),
+	}
+
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
 func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
 	}
 
-	token := strings.TrimSpace(c.Query("token"))
-	authCtx := auth.FromAuthorization("Bearer "+token, h.authTokenSecret)
-	if authCtx.Kind != "user" {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "missing bearer token"})
-		return
-	}
-
-	user, err := h.lookupUserByID(authCtx.UserID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "invalid bearer token"})
+	user, ok := h.userFromSocketToken(c)
+	if !ok {
 		return
 	}
 
@@ -91,13 +179,7 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 		return
 	}
 
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(request *http.Request) bool {
-			origin := request.Header.Get("Origin")
-			return origin == "" || strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")
-		},
-	}
-
+	upgrader := frontendSocketUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
@@ -174,6 +256,19 @@ func (h *FrontendHandler) broadcastCreatedMessage(threadID string, created front
 			ThreadID:  *created.RecipientThreadID,
 			Message:   created.Recipient,
 			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+
+	if created.RecipientUserID != nil && created.RecipientThread != nil {
+		unreadCount, err := h.messageUnreadCount(*created.RecipientUserID)
+		if err != nil {
+			unreadCount = created.RecipientThread.Unread
+		}
+		h.messageInboxHub.broadcast(*created.RecipientUserID, frontendMessageInboxSocketEvent{
+			Type:        "message",
+			Thread:      created.RecipientThread,
+			UnreadCount: unreadCount,
+			Timestamp:   time.Now().Format(time.RFC3339),
 		})
 	}
 }

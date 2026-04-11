@@ -99,6 +99,13 @@ type frontendChatSocketEvent struct {
 	Timestamp string                   `json:"timestamp"`
 }
 
+type frontendMessageInboxSocketEvent struct {
+	Type        string               `json:"type"`
+	Thread      *frontendMessageView `json:"thread,omitempty"`
+	UnreadCount int                  `json:"unreadCount"`
+	Timestamp   string               `json:"timestamp"`
+}
+
 type frontendChatClient struct {
 	threadID string
 	send     chan frontendChatSocketEvent
@@ -107,6 +114,16 @@ type frontendChatClient struct {
 type frontendChatHub struct {
 	mu      sync.RWMutex
 	clients map[string]map[*frontendChatClient]struct{}
+}
+
+type frontendMessageInboxClient struct {
+	userID string
+	send   chan frontendMessageInboxSocketEvent
+}
+
+type frontendMessageInboxHub struct {
+	mu      sync.RWMutex
+	clients map[string]map[*frontendMessageInboxClient]struct{}
 }
 
 type frontendMessageThreadDetailView struct {
@@ -131,10 +148,29 @@ type frontendNotificationsResponse struct {
 	UnreadCount int                        `json:"unreadCount"`
 }
 
+type frontendNotificationSocketEvent struct {
+	Type         string                    `json:"type"`
+	Notification *frontendNotificationView `json:"notification,omitempty"`
+	UnreadCount  int                       `json:"unreadCount"`
+	Timestamp    string                    `json:"timestamp"`
+}
+
+type frontendNotificationClient struct {
+	userID string
+	send   chan frontendNotificationSocketEvent
+}
+
+type frontendNotificationHub struct {
+	mu      sync.RWMutex
+	clients map[string]map[*frontendNotificationClient]struct{}
+}
+
 type frontendCreatedMessage struct {
 	Sender            frontendChatMessageView
 	Recipient         *frontendChatMessageView
 	RecipientThreadID *string
+	RecipientUserID   *string
+	RecipientThread   *frontendMessageView
 }
 
 type frontendTrendingTopicView struct {
@@ -222,6 +258,8 @@ type FrontendHandler struct {
 	googleClientID  string
 	authTokenSecret string
 	chatHub         *frontendChatHub
+	messageInboxHub *frontendMessageInboxHub
+	notificationHub *frontendNotificationHub
 }
 
 func NewFrontendHandler(db *gorm.DB, cfg config.Config) *FrontendHandler {
@@ -230,6 +268,8 @@ func NewFrontendHandler(db *gorm.DB, cfg config.Config) *FrontendHandler {
 		googleClientID:  strings.TrimSpace(cfg.GoogleClientID),
 		authTokenSecret: strings.TrimSpace(cfg.AuthTokenSecret),
 		chatHub:         newFrontendChatHub(),
+		messageInboxHub: newFrontendMessageInboxHub(),
+		notificationHub: newFrontendNotificationHub(),
 	}
 }
 
@@ -484,12 +524,16 @@ func (h *FrontendHandler) FollowProfileUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to follow user"})
 		return
 	}
+	var notification *frontendNotificationView
 	if changed {
-		err = h.createNotification(h.db, targetUser.ID, &authUser.ID, "follow", "New follower", fmt.Sprintf("%s started following you.", authUser.DisplayName), "/profile/"+authUser.Username, time.Now())
+		notification, err = h.createNotification(h.db, targetUser.ID, &authUser.ID, "follow", "New follower", fmt.Sprintf("%s started following you.", authUser.DisplayName), "/profile/"+authUser.Username, time.Now())
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to create notification"})
 		return
+	}
+	if notification != nil {
+		h.broadcastNotification(targetUser.ID, *notification)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"isFollowing": true})
@@ -605,6 +649,21 @@ func (h *FrontendHandler) GetMessages(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *FrontendHandler) GetMessageUnreadCount(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	unreadCount, err := h.messageUnreadCount(user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load unread messages"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"unreadCount": unreadCount})
 }
 
 func (h *FrontendHandler) GetMessageThread(c *gin.Context) {
@@ -1414,6 +1473,44 @@ func (h *FrontendHandler) messagesForUser(userID string) ([]frontendMessageView,
 	return items, nil
 }
 
+func (h *FrontendHandler) messageThreadViewByID(userID, threadID string) (frontendMessageView, error) {
+	var thread models.MessageThread
+	err := h.db.
+		Preload("PeerUser.Profile").
+		Preload("PeerUser.Stats").
+		Where("id = ? AND owner_user_id = ?", threadID, userID).
+		First(&thread).Error
+	if err != nil {
+		return frontendMessageView{}, err
+	}
+
+	return frontendMessageView{
+		ID:          thread.ID,
+		User:        buildFrontendUser(thread.PeerUser),
+		LastMessage: thread.LastMessage,
+		Timestamp:   relativeTime(thread.UpdatedAt),
+		Unread:      thread.UnreadCount,
+	}, nil
+}
+
+func (h *FrontendHandler) messageUnreadCount(userID string) (int, error) {
+	var unreadCount int64
+	if err := h.db.Model(&models.MessageThread{}).
+		Where("owner_user_id = ?", userID).
+		Select("COALESCE(SUM(unread_count), 0)").
+		Scan(&unreadCount).Error; err != nil {
+		return 0, err
+	}
+	return int(unreadCount), nil
+}
+
+func (h *FrontendHandler) nextThreadUnreadCount(threadID string) any {
+	if h.chatHub.hasSubscribers(threadID) {
+		return 0
+	}
+	return gorm.Expr("unread_count + ?", 1)
+}
+
 func (h *FrontendHandler) messageThreadDetail(userID, threadID string) (frontendMessageThreadDetailView, error) {
 	var thread models.MessageThread
 	err := h.db.
@@ -1424,6 +1521,14 @@ func (h *FrontendHandler) messageThreadDetail(userID, threadID string) (frontend
 		First(&thread).Error
 	if err != nil {
 		return frontendMessageThreadDetailView{}, err
+	}
+
+	if thread.UnreadCount > 0 {
+		if err := h.db.Model(&models.MessageThread{}).
+			Where("id = ? AND owner_user_id = ?", threadID, userID).
+			Update("unread_count", 0).Error; err != nil {
+			return frontendMessageThreadDetailView{}, err
+		}
 	}
 
 	messages := make([]frontendChatMessageView, 0, len(thread.Messages))
@@ -1447,12 +1552,15 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 	now := time.Now()
 	messageID := generateUUID()
 	var recipientThreadID *string
+	var recipientUserID *string
 
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		var thread models.MessageThread
 		if err := tx.Where("id = ? AND owner_user_id = ?", threadID, userID).First(&thread).Error; err != nil {
 			return err
 		}
+		peerUserID := thread.PeerUserID
+		recipientUserID = &peerUserID
 
 		message := models.DirectMessage{
 			ID:           messageID,
@@ -1495,7 +1603,7 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 		} else if err := tx.Model(&models.MessageThread{}).Where("id = ?", peerThread.ID).Updates(map[string]any{
 			"last_message": text,
 			"updated_at":   now,
-			"unread_count": gorm.Expr("unread_count + ?", 1),
+			"unread_count": h.nextThreadUnreadCount(peerThread.ID),
 		}).Error; err != nil {
 			return err
 		}
@@ -1512,10 +1620,19 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 			return err
 		}
 
-		return h.createNotification(tx, thread.PeerUserID, &userID, "message", "New message", "You have a new direct message.", "/dm", now)
+		return nil
 	})
 	if err != nil {
 		return frontendCreatedMessage{}, err
+	}
+
+	var recipientThread *frontendMessageView
+	if recipientUserID != nil && recipientThreadID != nil {
+		threadView, err := h.messageThreadViewByID(*recipientUserID, *recipientThreadID)
+		if err != nil {
+			return frontendCreatedMessage{}, err
+		}
+		recipientThread = &threadView
 	}
 
 	senderMessage := frontendChatMessageView{
@@ -1535,6 +1652,8 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 		Sender:            senderMessage,
 		Recipient:         &recipientMessage,
 		RecipientThreadID: recipientThreadID,
+		RecipientUserID:   recipientUserID,
+		RecipientThread:   recipientThread,
 	}, nil
 }
 
@@ -1543,17 +1662,15 @@ func (h *FrontendHandler) notificationsForUser(userID string) (frontendNotificat
 	if err := h.db.
 		Preload("ActorUser.Profile").
 		Preload("ActorUser.Stats").
-		Where("user_id = ?", userID).
+		Where("user_id = ? AND type <> ?", userID, "message").
 		Order("created_at desc").
 		Limit(50).
 		Find(&notifications).Error; err != nil {
 		return frontendNotificationsResponse{}, err
 	}
 
-	var unreadCount int64
-	if err := h.db.Model(&models.Notification{}).
-		Where("user_id = ? AND read_at IS NULL", userID).
-		Count(&unreadCount).Error; err != nil {
+	unreadCount, err := h.notificationUnreadCount(userID)
+	if err != nil {
 		return frontendNotificationsResponse{}, err
 	}
 
@@ -1564,14 +1681,24 @@ func (h *FrontendHandler) notificationsForUser(userID string) (frontendNotificat
 
 	return frontendNotificationsResponse{
 		Items:       items,
-		UnreadCount: int(unreadCount),
+		UnreadCount: unreadCount,
 	}, nil
+}
+
+func (h *FrontendHandler) notificationUnreadCount(userID string) (int, error) {
+	var unreadCount int64
+	if err := h.db.Model(&models.Notification{}).
+		Where("user_id = ? AND read_at IS NULL AND type <> ?", userID, "message").
+		Count(&unreadCount).Error; err != nil {
+		return 0, err
+	}
+	return int(unreadCount), nil
 }
 
 func (h *FrontendHandler) markNotificationRead(userID, notificationID string) (frontendNotificationView, error) {
 	now := time.Now()
 	result := h.db.Model(&models.Notification{}).
-		Where("id = ? AND user_id = ?", notificationID, userID).
+		Where("id = ? AND user_id = ? AND type <> ?", notificationID, userID, "message").
 		Update("read_at", &now)
 	if result.Error != nil {
 		return frontendNotificationView{}, result.Error
@@ -1584,7 +1711,7 @@ func (h *FrontendHandler) markNotificationRead(userID, notificationID string) (f
 	if err := h.db.
 		Preload("ActorUser.Profile").
 		Preload("ActorUser.Stats").
-		Where("id = ? AND user_id = ?", notificationID, userID).
+		Where("id = ? AND user_id = ? AND type <> ?", notificationID, userID, "message").
 		First(&notification).Error; err != nil {
 		return frontendNotificationView{}, err
 	}
@@ -1595,13 +1722,13 @@ func (h *FrontendHandler) markNotificationRead(userID, notificationID string) (f
 func (h *FrontendHandler) markAllNotificationsRead(userID string) error {
 	now := time.Now()
 	return h.db.Model(&models.Notification{}).
-		Where("user_id = ? AND read_at IS NULL", userID).
+		Where("user_id = ? AND read_at IS NULL AND type <> ?", userID, "message").
 		Update("read_at", &now).Error
 }
 
-func (h *FrontendHandler) createNotification(tx *gorm.DB, userID string, actorUserID *string, notificationType string, title string, body string, actionHref string, createdAt time.Time) error {
+func (h *FrontendHandler) createNotification(tx *gorm.DB, userID string, actorUserID *string, notificationType string, title string, body string, actionHref string, createdAt time.Time) (*frontendNotificationView, error) {
 	if actorUserID != nil && *actorUserID == userID {
-		return nil
+		return nil, nil
 	}
 
 	notification := models.Notification{
@@ -1614,7 +1741,24 @@ func (h *FrontendHandler) createNotification(tx *gorm.DB, userID string, actorUs
 		ActionHref:  actionHref,
 		CreatedAt:   createdAt,
 	}
-	return tx.Create(&notification).Error
+	if err := tx.Create(&notification).Error; err != nil {
+		return nil, err
+	}
+	if notificationType == "message" {
+		return nil, nil
+	}
+
+	var created models.Notification
+	if err := tx.
+		Preload("ActorUser.Profile").
+		Preload("ActorUser.Stats").
+		Where("id = ?", notification.ID).
+		First(&created).Error; err != nil {
+		return nil, err
+	}
+
+	view := buildFrontendNotification(created)
+	return &view, nil
 }
 
 func (h *FrontendHandler) leaderboard(timeframe string, category string) ([]frontendLeaderboardEntry, error) {

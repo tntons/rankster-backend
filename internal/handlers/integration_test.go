@@ -438,6 +438,110 @@ func TestNotificationsListAndMarkRead(t *testing.T) {
 	}
 }
 
+func TestActivityNotificationsExcludeDirectMessages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "rankmaster99")
+
+	req := httptest.NewRequest(http.MethodGet, "/notifications", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("notifications status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		UnreadCount int `json:"unreadCount"`
+		Items       []struct {
+			Type string `json:"type"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode notifications response: %v", err)
+	}
+	if response.UnreadCount != 0 || len(response.Items) != 0 {
+		t.Fatalf("direct messages should stay out of activity notifications: %+v", response)
+	}
+}
+
+func TestOpeningMessageThreadClearsUnreadCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodGet, "/messages/threads", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("messages status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var threadsResponse struct {
+		Items []struct {
+			ID     string `json:"id"`
+			Unread int    `json:"unread"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &threadsResponse); err != nil {
+		t.Fatalf("decode messages response: %v", err)
+	}
+
+	var unreadThreadID string
+	totalUnread := 0
+	selectedUnread := 0
+	for _, thread := range threadsResponse.Items {
+		totalUnread += thread.Unread
+		if unreadThreadID == "" && thread.Unread > 0 {
+			unreadThreadID = thread.ID
+			selectedUnread = thread.Unread
+		}
+	}
+	if unreadThreadID == "" {
+		t.Fatalf("expected at least one unread demo thread: %+v", threadsResponse)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/messages/threads/"+unreadThreadID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("thread status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/messages/unread-count", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unread count status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var countResponse struct {
+		UnreadCount int `json:"unreadCount"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &countResponse); err != nil {
+		t.Fatalf("decode unread count response: %v", err)
+	}
+	expectedUnread := totalUnread - selectedUnread
+	if countResponse.UnreadCount != expectedUnread {
+		t.Fatalf("unreadCount = %d, want %d after opening thread", countResponse.UnreadCount, expectedUnread)
+	}
+}
+
 func TestPinAndUnpinProfilePost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

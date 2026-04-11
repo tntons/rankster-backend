@@ -216,6 +216,137 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	}
 }
 
+func TestPostCommentAppendsCommentToPost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodGet, "/feed/main?limit=1", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("feed status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var feed struct {
+		Items []struct {
+			ID       string `json:"id"`
+			Comments []struct {
+				ID string `json:"id"`
+			} `json:"comments"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &feed); err != nil {
+		t.Fatalf("decode feed response: %v", err)
+	}
+	if len(feed.Items) == 0 || feed.Items[0].ID == "" {
+		t.Fatalf("expected a feed post, got %+v", feed)
+	}
+
+	postID := feed.Items[0].ID
+	initialCommentCount := len(feed.Items[0].Comments)
+	body := bytes.NewBufferString(`{"text":"Testing comments from integration suite"}`)
+	req = httptest.NewRequest(http.MethodPost, "/feed/post/"+postID+"/comments", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("comment status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var created struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+		User struct {
+			Username string `json:"username"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created comment: %v", err)
+	}
+	if created.ID == "" || created.Text != "Testing comments from integration suite" || created.User.Username != "me" {
+		t.Fatalf("unexpected created comment: %+v", created)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/feed/comments/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("like comment status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var likedComment struct {
+		Likes   int  `json:"likes"`
+		IsLiked bool `json:"isLiked"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedComment); err != nil {
+		t.Fatalf("decode liked comment: %v", err)
+	}
+	if likedComment.Likes != 1 || !likedComment.IsLiked {
+		t.Fatalf("unexpected liked comment response: %+v", likedComment)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/feed/comments/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("second like comment status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedComment); err != nil {
+		t.Fatalf("decode second liked comment: %v", err)
+	}
+	if likedComment.Likes != 1 || !likedComment.IsLiked {
+		t.Fatalf("comment like should be idempotent, got %+v", likedComment)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/post/"+postID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var post struct {
+		Comments []struct {
+			Text    string `json:"text"`
+			Likes   int    `json:"likes"`
+			IsLiked bool   `json:"isLiked"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &post); err != nil {
+		t.Fatalf("decode post response: %v", err)
+	}
+	if len(post.Comments) != initialCommentCount+1 || post.Comments[0].Text != "Testing comments from integration suite" {
+		t.Fatalf("comment was not appended: %+v", post.Comments)
+	}
+	if post.Comments[0].Likes != 1 || !post.Comments[0].IsLiked {
+		t.Fatalf("comment like was not hydrated: %+v", post.Comments[0])
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/feed/comments/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unlike comment status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedComment); err != nil {
+		t.Fatalf("decode unliked comment: %v", err)
+	}
+	if likedComment.Likes != 0 || likedComment.IsLiked {
+		t.Fatalf("unexpected unliked comment response: %+v", likedComment)
+	}
+}
+
 func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

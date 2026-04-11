@@ -250,6 +250,13 @@ type Comment struct {
 	Author User `gorm:"foreignKey:AuthorID"`
 }
 
+type CommentLike struct {
+	ID        string `gorm:"type:uuid;primaryKey"`
+	CommentID string `gorm:"type:uuid;index;uniqueIndex:idx_comment_like_user"`
+	UserID    string `gorm:"type:uuid;index;uniqueIndex:idx_comment_like_user"`
+	CreatedAt time.Time
+}
+
 type PostLike struct {
 	ID        string `gorm:"type:uuid;primaryKey"`
 	PostID    string `gorm:"type:uuid;index"`

@@ -16,6 +16,9 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 	router.GET("/feed/main", frontendHandler.GetMainFeed)
 	router.GET("/feed/post/:id", frontendHandler.GetPost)
+	router.POST("/feed/post/:id/comments", frontendHandler.PostComment)
+	router.POST("/feed/comments/:id/like", frontendHandler.LikeComment)
+	router.DELETE("/feed/comments/:id/like", frontendHandler.UnlikeComment)
 	router.POST("/rank/create", frontendHandler.CreateRank)
 
 	router.GET("/profile/me", frontendHandler.GetProfileMe)

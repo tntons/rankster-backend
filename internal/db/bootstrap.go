@@ -33,6 +33,7 @@ func AutoMigrate(database *gorm.DB) error {
 		&models.SurveyImpression{},
 		&models.PostMetrics{},
 		&models.Comment{},
+		&models.CommentLike{},
 		&models.PostLike{},
 		&models.PostShare{},
 		&models.PinnedPost{},

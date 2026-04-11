@@ -55,6 +55,12 @@ type frontendCommentView struct {
 	Text      string           `json:"text"`
 	CreatedAt string           `json:"createdAt"`
 	Likes     int              `json:"likes"`
+	IsLiked   bool             `json:"isLiked"`
+}
+
+type frontendCommentLikeResponse struct {
+	Likes   int  `json:"likes"`
+	IsLiked bool `json:"isLiked"`
 }
 
 type frontendRankPostView struct {
@@ -251,6 +257,10 @@ type frontendCreateRankRequest struct {
 	AllItems     []frontendTierItem `json:"allItems"`
 	IsPublic     *bool              `json:"isPublic"`
 	SourcePostID string             `json:"sourcePostId"`
+}
+
+type frontendCreateCommentRequest struct {
+	Text string `json:"text"`
 }
 
 type FrontendHandler struct {
@@ -799,6 +809,47 @@ func (h *FrontendHandler) GetPost(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, post)
+}
+
+func (h *FrontendHandler) PostComment(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	var body frontendCreateCommentRequest
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "comment text is required"})
+		return
+	}
+
+	comment, notificationRecipientID, notification, err := h.createComment(user, c.Param("id"), strings.TrimSpace(body.Text))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "POST_NOT_FOUND", "message": "post not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to create comment"})
+		return
+	}
+
+	if notification != nil {
+		h.broadcastNotification(notificationRecipientID, *notification)
+	}
+
+	c.JSON(http.StatusCreated, comment)
+}
+
+func (h *FrontendHandler) LikeComment(c *gin.Context) {
+	h.setCommentLike(c, true)
+}
+
+func (h *FrontendHandler) UnlikeComment(c *gin.Context) {
+	h.setCommentLike(c, false)
 }
 
 func (h *FrontendHandler) CreateRank(c *gin.Context) {
@@ -1987,6 +2038,164 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 	return h.postByID(postID, &user)
 }
 
+func (h *FrontendHandler) createComment(user frontendUserView, postID string, text string) (frontendCommentView, string, *frontendNotificationView, error) {
+	now := time.Now()
+	var (
+		comment                 frontendCommentView
+		notification            *frontendNotificationView
+		notificationRecipientID string
+	)
+
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		var list models.TierListPost
+		if err := tx.
+			Preload("Post.Creator.Profile").
+			Preload("Post.Creator.Stats").
+			Where("post_id = ?", postID).
+			First(&list).Error; err != nil {
+			return err
+		}
+
+		created := models.Comment{
+			ID:        generateUUID(),
+			PostID:    postID,
+			AuthorID:  user.ID,
+			Body:      text,
+			LikeCount: 0,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := tx.Create(&created).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.PostMetrics{}).
+			Where("post_id = ?", postID).
+			Updates(map[string]any{
+				"comment_count": gorm.Expr("comment_count + ?", 1),
+				"hot_score":     gorm.Expr("hot_score + ?", 1.5),
+				"updated_at":    now,
+			}).Error; err != nil {
+			return err
+		}
+
+		comment = frontendCommentView{
+			ID:        created.ID,
+			User:      user,
+			Text:      created.Body,
+			CreatedAt: relativeTime(created.CreatedAt),
+			Likes:     created.LikeCount,
+			IsLiked:   false,
+		}
+
+		if list.Post.CreatorID != user.ID {
+			notificationRecipientID = list.Post.CreatorID
+			var err error
+			notification, err = h.createNotification(
+				tx,
+				list.Post.CreatorID,
+				&user.ID,
+				"comment",
+				"New comment",
+				fmt.Sprintf("%s commented on your ranking.", user.DisplayName),
+				"/topic/"+postID,
+				now,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	return comment, notificationRecipientID, notification, err
+}
+
+func (h *FrontendHandler) setCommentLike(c *gin.Context, liked bool) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	response, err := h.updateCommentLike(c.Param("id"), user.ID, liked)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "COMMENT_NOT_FOUND", "message": "comment not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to update comment like"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *FrontendHandler) updateCommentLike(commentID string, userID string, liked bool) (frontendCommentLikeResponse, error) {
+	var response frontendCommentLikeResponse
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		var comment models.Comment
+		if err := tx.Where("id = ?", commentID).First(&comment).Error; err != nil {
+			return err
+		}
+
+		var existing models.CommentLike
+		err := tx.Where("comment_id = ? AND user_id = ?", commentID, userID).First(&existing).Error
+		if liked {
+			if err == nil {
+				response = frontendCommentLikeResponse{Likes: comment.LikeCount, IsLiked: true}
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err := tx.Create(&models.CommentLike{
+				ID:        generateUUID(),
+				CommentID: commentID,
+				UserID:    userID,
+				CreatedAt: time.Now(),
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.Comment{}).
+				Where("id = ?", commentID).
+				Update("like_count", gorm.Expr("like_count + ?", 1)).Error; err != nil {
+				return err
+			}
+			comment.LikeCount++
+			response = frontendCommentLikeResponse{Likes: comment.LikeCount, IsLiked: true}
+			return nil
+		}
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response = frontendCommentLikeResponse{Likes: comment.LikeCount, IsLiked: false}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		result := tx.Where("comment_id = ? AND user_id = ?", commentID, userID).Delete(&models.CommentLike{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			if err := tx.Model(&models.Comment{}).
+				Where("id = ?", commentID).
+				Update("like_count", gorm.Expr("CASE WHEN like_count > 0 THEN like_count - 1 ELSE 0 END")).Error; err != nil {
+				return err
+			}
+			if comment.LikeCount > 0 {
+				comment.LikeCount--
+			}
+		}
+		response = frontendCommentLikeResponse{Likes: comment.LikeCount, IsLiked: false}
+		return nil
+	})
+	return response, err
+}
+
 type computedUserStats struct {
 	RanksCreated     int
 	LikesReceived    int
@@ -2036,7 +2245,7 @@ func (h *FrontendHandler) hydrateTierLists(lists []models.TierListPost, authUser
 		postIDs = append(postIDs, list.PostID)
 	}
 
-	commentsByPost, err := h.loadComments(postIDs)
+	commentsByPost, err := h.loadComments(postIDs, authUser)
 	if err != nil {
 		return nil, err
 	}
@@ -2052,7 +2261,7 @@ func (h *FrontendHandler) hydrateTierLists(lists []models.TierListPost, authUser
 	return items, nil
 }
 
-func (h *FrontendHandler) loadComments(postIDs []string) (map[string][]frontendCommentView, error) {
+func (h *FrontendHandler) loadComments(postIDs []string, authUser *frontendUserView) (map[string][]frontendCommentView, error) {
 	out := map[string][]frontendCommentView{}
 	if len(postIDs) == 0 {
 		return out, nil
@@ -2069,6 +2278,22 @@ func (h *FrontendHandler) loadComments(postIDs []string) (map[string][]frontendC
 		return nil, err
 	}
 
+	likedByComment := map[string]bool{}
+	if authUser != nil && len(comments) > 0 {
+		commentIDs := make([]string, 0, len(comments))
+		for _, comment := range comments {
+			commentIDs = append(commentIDs, comment.ID)
+		}
+
+		var likes []models.CommentLike
+		if err := h.db.Where("user_id = ? AND comment_id IN ?", authUser.ID, commentIDs).Find(&likes).Error; err != nil {
+			return nil, err
+		}
+		for _, like := range likes {
+			likedByComment[like.CommentID] = true
+		}
+	}
+
 	for _, comment := range comments {
 		out[comment.PostID] = append(out[comment.PostID], frontendCommentView{
 			ID:        comment.ID,
@@ -2076,6 +2301,7 @@ func (h *FrontendHandler) loadComments(postIDs []string) (map[string][]frontendC
 			Text:      comment.Body,
 			CreatedAt: relativeTime(comment.CreatedAt),
 			Likes:     comment.LikeCount,
+			IsLiked:   likedByComment[comment.ID],
 		})
 	}
 	return out, nil

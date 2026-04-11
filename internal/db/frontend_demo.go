@@ -525,30 +525,11 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 		}
 
 		for _, seed := range messages {
-			threadID := uuid.NewString()
-			thread := models.MessageThread{
-				ID:          threadID,
-				OwnerUserID: userIDs[seed.OwnerUsername],
-				PeerUserID:  userIDs[seed.PeerUsername],
-				LastMessage: seed.LastMessage,
-				UnreadCount: seed.Unread,
-				UpdatedAt:   now.Add(-seed.Age),
-				CreatedAt:   now.Add(-seed.Age),
-			}
-			if err := tx.Create(&thread).Error; err != nil {
+			if err := createDemoMessageThread(tx, now, seed, seed.OwnerUsername, seed.PeerUsername, seed.Unread, userIDs); err != nil {
 				return err
 			}
-			for _, chat := range seed.History {
-				message := models.DirectMessage{
-					ID:           uuid.NewString(),
-					ThreadID:     threadID,
-					SenderUserID: userIDs[chat.SenderUsername],
-					Body:         chat.Text,
-					CreatedAt:    now.Add(-chat.Age),
-				}
-				if err := tx.Create(&message).Error; err != nil {
-					return err
-				}
+			if err := createDemoMessageThread(tx, now, seed, seed.PeerUsername, seed.OwnerUsername, 0, userIDs); err != nil {
+				return err
 			}
 		}
 
@@ -569,6 +550,35 @@ func seedFrontendDemo(database *gorm.DB, publicBaseURL string) error {
 
 		return nil
 	})
+}
+
+func createDemoMessageThread(tx *gorm.DB, now time.Time, seed frontendDemoMessage, ownerUsername string, peerUsername string, unread int, userIDs map[string]string) error {
+	threadID := uuid.NewString()
+	thread := models.MessageThread{
+		ID:          threadID,
+		OwnerUserID: userIDs[ownerUsername],
+		PeerUserID:  userIDs[peerUsername],
+		LastMessage: seed.LastMessage,
+		UnreadCount: unread,
+		UpdatedAt:   now.Add(-seed.Age),
+		CreatedAt:   now.Add(-seed.Age),
+	}
+	if err := tx.Create(&thread).Error; err != nil {
+		return err
+	}
+	for _, chat := range seed.History {
+		message := models.DirectMessage{
+			ID:           uuid.NewString(),
+			ThreadID:     threadID,
+			SenderUserID: userIDs[chat.SenderUsername],
+			Body:         chat.Text,
+			CreatedAt:    now.Add(-chat.Age),
+		}
+		if err := tx.Create(&message).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func upsertFrontendUser(tx *gorm.DB, baseURL string, now time.Time, seed frontendDemoUser) (string, error) {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -90,10 +91,34 @@ type frontendChatMessageView struct {
 	Timestamp string `json:"timestamp"`
 }
 
+type frontendChatSocketEvent struct {
+	Type      string                   `json:"type"`
+	ThreadID  string                   `json:"threadId"`
+	Message   *frontendChatMessageView `json:"message,omitempty"`
+	Error     *string                  `json:"error,omitempty"`
+	Timestamp string                   `json:"timestamp"`
+}
+
+type frontendChatClient struct {
+	threadID string
+	send     chan frontendChatSocketEvent
+}
+
+type frontendChatHub struct {
+	mu      sync.RWMutex
+	clients map[string]map[*frontendChatClient]struct{}
+}
+
 type frontendMessageThreadDetailView struct {
 	ID       string                    `json:"id"`
 	User     frontendUserView          `json:"user"`
 	Messages []frontendChatMessageView `json:"messages"`
+}
+
+type frontendCreatedMessage struct {
+	Sender            frontendChatMessageView
+	Recipient         *frontendChatMessageView
+	RecipientThreadID *string
 }
 
 type frontendTrendingTopicView struct {
@@ -180,6 +205,7 @@ type FrontendHandler struct {
 	db              *gorm.DB
 	googleClientID  string
 	authTokenSecret string
+	chatHub         *frontendChatHub
 }
 
 func NewFrontendHandler(db *gorm.DB, cfg config.Config) *FrontendHandler {
@@ -187,6 +213,7 @@ func NewFrontendHandler(db *gorm.DB, cfg config.Config) *FrontendHandler {
 		db:              db,
 		googleClientID:  strings.TrimSpace(cfg.GoogleClientID),
 		authTokenSecret: strings.TrimSpace(cfg.AuthTokenSecret),
+		chatHub:         newFrontendChatHub(),
 	}
 }
 
@@ -589,7 +616,7 @@ func (h *FrontendHandler) PostMessage(c *gin.Context) {
 		return
 	}
 
-	message, err := h.createMessage(user.ID, c.Param("id"), strings.TrimSpace(body.Text))
+	created, err := h.createMessage(user.ID, c.Param("id"), strings.TrimSpace(body.Text))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"code": "THREAD_NOT_FOUND", "message": "thread not found"})
@@ -599,7 +626,8 @@ func (h *FrontendHandler) PostMessage(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, message)
+	h.broadcastCreatedMessage(c.Param("id"), created)
+	c.JSON(http.StatusCreated, created.Sender)
 }
 
 func (h *FrontendHandler) GetLeaderboard(c *gin.Context) {
@@ -1333,9 +1361,10 @@ func (h *FrontendHandler) messageThreadDetail(userID, threadID string) (frontend
 	}, nil
 }
 
-func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontendChatMessageView, error) {
+func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontendCreatedMessage, error) {
 	now := time.Now()
 	messageID := generateUUID()
+	var recipientThreadID *string
 
 	err := h.db.Transaction(func(tx *gorm.DB) error {
 		var thread models.MessageThread
@@ -1354,21 +1383,72 @@ func (h *FrontendHandler) createMessage(userID, threadID, text string) (frontend
 			return err
 		}
 
-		return tx.Model(&models.MessageThread{}).Where("id = ?", thread.ID).Updates(map[string]any{
+		if err := tx.Model(&models.MessageThread{}).Where("id = ?", thread.ID).Updates(map[string]any{
 			"last_message": text,
 			"updated_at":   now,
 			"unread_count": 0,
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+
+		var peerThread models.MessageThread
+		err := tx.Where("owner_user_id = ? AND peer_user_id = ?", thread.PeerUserID, userID).First(&peerThread).Error
+		if err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			peerThread = models.MessageThread{
+				ID:          generateUUID(),
+				OwnerUserID: thread.PeerUserID,
+				PeerUserID:  userID,
+				LastMessage: text,
+				UnreadCount: 1,
+				UpdatedAt:   now,
+				CreatedAt:   now,
+			}
+			if err := tx.Create(&peerThread).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Model(&models.MessageThread{}).Where("id = ?", peerThread.ID).Updates(map[string]any{
+			"last_message": text,
+			"updated_at":   now,
+			"unread_count": gorm.Expr("unread_count + ?", 1),
+		}).Error; err != nil {
+			return err
+		}
+
+		recipientThreadID = &peerThread.ID
+		peerMessage := models.DirectMessage{
+			ID:           generateUUID(),
+			ThreadID:     peerThread.ID,
+			SenderUserID: userID,
+			Body:         text,
+			CreatedAt:    now,
+		}
+		return tx.Create(&peerMessage).Error
 	})
 	if err != nil {
-		return frontendChatMessageView{}, err
+		return frontendCreatedMessage{}, err
 	}
 
-	return frontendChatMessageView{
+	senderMessage := frontendChatMessageView{
 		ID:        messageID,
 		Text:      text,
 		Mine:      true,
 		Timestamp: "Now",
+	}
+	recipientMessage := frontendChatMessageView{
+		ID:        messageID,
+		Text:      text,
+		Mine:      false,
+		Timestamp: "Now",
+	}
+
+	return frontendCreatedMessage{
+		Sender:            senderMessage,
+		Recipient:         &recipientMessage,
+		RecipientThreadID: recipientThreadID,
 	}, nil
 }
 

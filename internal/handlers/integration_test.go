@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 
 	"rankster-backend/internal/config"
 	"rankster-backend/internal/server"
@@ -288,6 +292,61 @@ func TestPostMessageAppendsConversation(t *testing.T) {
 	}
 	if len(response.Messages) == 0 || response.Messages[len(response.Messages)-1].Text != "Testing from integration suite" {
 		t.Fatalf("message was not appended: %+v", response.Messages)
+	}
+}
+
+func TestMessageThreadWebSocketSendsConversationEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+	threadID := firstThreadID(t, router, token)
+	testServer := httptest.NewServer(router)
+	defer testServer.Close()
+
+	values := url.Values{}
+	values.Set("token", token)
+	socketURL := strings.Replace(testServer.URL, "http://", "ws://", 1) + "/messages/threads/" + threadID + "/ws?" + values.Encode()
+
+	socket, _, err := websocket.DefaultDialer.Dial(socketURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer socket.Close()
+
+	if err := socket.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+
+	var ready struct {
+		Type string `json:"type"`
+	}
+	if err := socket.ReadJSON(&ready); err != nil {
+		t.Fatalf("read ready event: %v", err)
+	}
+	if ready.Type != "ready" {
+		t.Fatalf("ready type = %q, want ready", ready.Type)
+	}
+
+	if err := socket.WriteJSON(map[string]string{"type": "message", "text": "Realtime test message"}); err != nil {
+		t.Fatalf("write websocket message: %v", err)
+	}
+
+	var event struct {
+		Type    string `json:"type"`
+		Message struct {
+			Text string `json:"text"`
+			Mine bool   `json:"mine"`
+		} `json:"message"`
+	}
+	if err := socket.ReadJSON(&event); err != nil {
+		t.Fatalf("read message event: %v", err)
+	}
+	if event.Type != "message" || event.Message.Text != "Realtime test message" || !event.Message.Mine {
+		t.Fatalf("unexpected message event: %+v", event)
 	}
 }
 

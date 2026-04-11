@@ -31,6 +31,7 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 	router.GET("/messages/threads", frontendHandler.GetMessages)
 	router.GET("/messages/threads/:id", frontendHandler.GetMessageThread)
+	router.GET("/messages/threads/:id/ws", frontendHandler.WebSocketMessageThread)
 	router.POST("/messages/threads/:id/messages", frontendHandler.PostMessage)
 	router.GET("/leaderboard", frontendHandler.GetLeaderboard)
 	router.GET("/user/stats", frontendHandler.GetUserStats)

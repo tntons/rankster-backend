@@ -166,13 +166,14 @@ type frontendLeaderboardEntry struct {
 }
 
 type frontendCreateRankRequest struct {
-	Title       string             `json:"title"`
-	Category    string             `json:"category"`
-	Description string             `json:"description"`
-	Tags        []string           `json:"tags"`
-	Tiers       frontendTierData   `json:"tiers"`
-	AllItems    []frontendTierItem `json:"allItems"`
-	IsPublic    *bool              `json:"isPublic"`
+	Title        string             `json:"title"`
+	Category     string             `json:"category"`
+	Description  string             `json:"description"`
+	Tags         []string           `json:"tags"`
+	Tiers        frontendTierData   `json:"tiers"`
+	AllItems     []frontendTierItem `json:"allItems"`
+	IsPublic     *bool              `json:"isPublic"`
+	SourcePostID string             `json:"sourcePostId"`
 }
 
 type FrontendHandler struct {
@@ -1460,8 +1461,16 @@ func (h *FrontendHandler) resolveTrendingTopicPostID(topicID string) (*string, e
 func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateRankRequest) (frontendRankPostView, error) {
 	now := time.Now()
 	postID := ""
+	sourcePostID := strings.TrimSpace(body.SourcePostID)
 
 	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if sourcePostID != "" {
+			var source models.TierListPost
+			if err := tx.Where("post_id = ?", sourcePostID).First(&source).Error; err != nil {
+				return err
+			}
+		}
+
 		category, err := ensureCategory(tx, body.Category, now)
 		if err != nil {
 			return err
@@ -1564,6 +1573,20 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 		if err := tx.Model(&models.UserStats{}).Where("user_id = ?", user.ID).
 			Update("ranks_created_count", gorm.Expr("ranks_created_count + ?", 1)).Error; err != nil {
 			return err
+		}
+
+		if sourcePostID != "" {
+			if err := tx.Model(&models.TierListPost{}).
+				Where("post_id = ?", sourcePostID).
+				Update("participant_count", gorm.Expr("participant_count + ?", 1)).Error; err != nil {
+				return err
+			}
+
+			if err := tx.Model(&models.TrendingTopic{}).
+				Where("source_post_id = ?", sourcePostID).
+				Update("participant_count", gorm.Expr("participant_count + ?", 1)).Error; err != nil {
+				return err
+			}
 		}
 
 		return nil

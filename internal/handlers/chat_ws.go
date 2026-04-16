@@ -12,27 +12,27 @@ import (
 
 const chatSocketBufferSize = 16
 
-func newFrontendChatHub() *frontendChatHub {
-	return &frontendChatHub{
-		clients: map[string]map[*frontendChatClient]struct{}{},
+func newChatHub() *chatHub {
+	return &chatHub{
+		clients: map[string]map[*chatClient]struct{}{},
 	}
 }
 
-func newFrontendMessageInboxHub() *frontendMessageInboxHub {
-	return &frontendMessageInboxHub{
-		clients: map[string]map[*frontendMessageInboxClient]struct{}{},
+func newMessageInboxHub() *messageInboxHub {
+	return &messageInboxHub{
+		clients: map[string]map[*messageInboxClient]struct{}{},
 	}
 }
 
-func (hub *frontendMessageInboxHub) subscribe(userID string) (*frontendMessageInboxClient, func()) {
-	client := &frontendMessageInboxClient{
+func (hub *messageInboxHub) subscribe(userID string) (*messageInboxClient, func()) {
+	client := &messageInboxClient{
 		userID: userID,
-		send:   make(chan frontendMessageInboxSocketEvent, chatSocketBufferSize),
+		send:   make(chan messageInboxSocketEvent, chatSocketBufferSize),
 	}
 
 	hub.mu.Lock()
 	if hub.clients[userID] == nil {
-		hub.clients[userID] = map[*frontendMessageInboxClient]struct{}{}
+		hub.clients[userID] = map[*messageInboxClient]struct{}{}
 	}
 	hub.clients[userID][client] = struct{}{}
 	hub.mu.Unlock()
@@ -54,7 +54,7 @@ func (hub *frontendMessageInboxHub) subscribe(userID string) (*frontendMessageIn
 	return client, unsubscribe
 }
 
-func (hub *frontendMessageInboxHub) broadcast(userID string, event frontendMessageInboxSocketEvent) {
+func (hub *messageInboxHub) broadcast(userID string, event messageInboxSocketEvent) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 
@@ -66,15 +66,15 @@ func (hub *frontendMessageInboxHub) broadcast(userID string, event frontendMessa
 	}
 }
 
-func (hub *frontendChatHub) subscribe(threadID string) (*frontendChatClient, func()) {
-	client := &frontendChatClient{
+func (hub *chatHub) subscribe(threadID string) (*chatClient, func()) {
+	client := &chatClient{
 		threadID: threadID,
-		send:     make(chan frontendChatSocketEvent, chatSocketBufferSize),
+		send:     make(chan chatSocketEvent, chatSocketBufferSize),
 	}
 
 	hub.mu.Lock()
 	if hub.clients[threadID] == nil {
-		hub.clients[threadID] = map[*frontendChatClient]struct{}{}
+		hub.clients[threadID] = map[*chatClient]struct{}{}
 	}
 	hub.clients[threadID][client] = struct{}{}
 	hub.mu.Unlock()
@@ -96,7 +96,7 @@ func (hub *frontendChatHub) subscribe(threadID string) (*frontendChatClient, fun
 	return client, unsubscribe
 }
 
-func (hub *frontendChatHub) broadcast(threadID string, event frontendChatSocketEvent) {
+func (hub *chatHub) broadcast(threadID string, event chatSocketEvent) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 
@@ -108,13 +108,13 @@ func (hub *frontendChatHub) broadcast(threadID string, event frontendChatSocketE
 	}
 }
 
-func (hub *frontendChatHub) hasSubscribers(threadID string) bool {
+func (hub *chatHub) hasSubscribers(threadID string) bool {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 	return len(hub.clients[threadID]) > 0
 }
 
-func (h *FrontendHandler) WebSocketMessageInbox(c *gin.Context) {
+func (h *Handler) WebSocketMessageInbox(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
 	}
@@ -124,7 +124,7 @@ func (h *FrontendHandler) WebSocketMessageInbox(c *gin.Context) {
 		return
 	}
 
-	upgrader := frontendSocketUpgrader()
+	upgrader := socketUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
@@ -146,7 +146,7 @@ func (h *FrontendHandler) WebSocketMessageInbox(c *gin.Context) {
 	if err != nil {
 		unreadCount = 0
 	}
-	client.send <- frontendMessageInboxSocketEvent{
+	client.send <- messageInboxSocketEvent{
 		Type:        "ready",
 		UnreadCount: unreadCount,
 		Timestamp:   time.Now().Format(time.RFC3339),
@@ -159,7 +159,7 @@ func (h *FrontendHandler) WebSocketMessageInbox(c *gin.Context) {
 	}
 }
 
-func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
+func (h *Handler) WebSocketMessageThread(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
 	}
@@ -179,7 +179,7 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 		return
 	}
 
-	upgrader := frontendSocketUpgrader()
+	upgrader := socketUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
@@ -197,7 +197,7 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 		}
 	}()
 
-	client.send <- frontendChatSocketEvent{
+	client.send <- chatSocketEvent{
 		Type:      "ready",
 		ThreadID:  threadID,
 		Timestamp: time.Now().Format(time.RFC3339),
@@ -218,7 +218,7 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 		text := strings.TrimSpace(incoming.Text)
 		if text == "" {
 			message := "message text is required"
-			client.send <- frontendChatSocketEvent{
+			client.send <- chatSocketEvent{
 				Type:      "error",
 				ThreadID:  threadID,
 				Error:     &message,
@@ -230,7 +230,7 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 		created, err := h.createMessage(user.ID, threadID, text)
 		if err != nil {
 			message := "failed to send message"
-			client.send <- frontendChatSocketEvent{
+			client.send <- chatSocketEvent{
 				Type:      "error",
 				ThreadID:  threadID,
 				Error:     &message,
@@ -242,8 +242,8 @@ func (h *FrontendHandler) WebSocketMessageThread(c *gin.Context) {
 	}
 }
 
-func (h *FrontendHandler) broadcastCreatedMessage(threadID string, created frontendCreatedMessage) {
-	h.chatHub.broadcast(threadID, frontendChatSocketEvent{
+func (h *Handler) broadcastCreatedMessage(threadID string, created createdMessageView) {
+	h.chatHub.broadcast(threadID, chatSocketEvent{
 		Type:      "message",
 		ThreadID:  threadID,
 		Message:   &created.Sender,
@@ -251,7 +251,7 @@ func (h *FrontendHandler) broadcastCreatedMessage(threadID string, created front
 	})
 
 	if created.RecipientThreadID != nil && created.Recipient != nil {
-		h.chatHub.broadcast(*created.RecipientThreadID, frontendChatSocketEvent{
+		h.chatHub.broadcast(*created.RecipientThreadID, chatSocketEvent{
 			Type:      "message",
 			ThreadID:  *created.RecipientThreadID,
 			Message:   created.Recipient,
@@ -264,7 +264,7 @@ func (h *FrontendHandler) broadcastCreatedMessage(threadID string, created front
 		if err != nil {
 			unreadCount = created.RecipientThread.Unread
 		}
-		h.messageInboxHub.broadcast(*created.RecipientUserID, frontendMessageInboxSocketEvent{
+		h.messageInboxHub.broadcast(*created.RecipientUserID, messageInboxSocketEvent{
 			Type:        "message",
 			Thread:      created.RecipientThread,
 			UnreadCount: unreadCount,

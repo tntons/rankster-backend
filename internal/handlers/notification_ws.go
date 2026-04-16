@@ -7,27 +7,25 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-
-	"rankster-backend/internal/auth"
 )
 
 const notificationSocketBufferSize = 16
 
-func newFrontendNotificationHub() *frontendNotificationHub {
-	return &frontendNotificationHub{
-		clients: map[string]map[*frontendNotificationClient]struct{}{},
+func newNotificationHub() *notificationHub {
+	return &notificationHub{
+		clients: map[string]map[*notificationClient]struct{}{},
 	}
 }
 
-func (hub *frontendNotificationHub) subscribe(userID string) (*frontendNotificationClient, func()) {
-	client := &frontendNotificationClient{
+func (hub *notificationHub) subscribe(userID string) (*notificationClient, func()) {
+	client := &notificationClient{
 		userID: userID,
-		send:   make(chan frontendNotificationSocketEvent, notificationSocketBufferSize),
+		send:   make(chan notificationSocketEvent, notificationSocketBufferSize),
 	}
 
 	hub.mu.Lock()
 	if hub.clients[userID] == nil {
-		hub.clients[userID] = map[*frontendNotificationClient]struct{}{}
+		hub.clients[userID] = map[*notificationClient]struct{}{}
 	}
 	hub.clients[userID][client] = struct{}{}
 	hub.mu.Unlock()
@@ -49,7 +47,7 @@ func (hub *frontendNotificationHub) subscribe(userID string) (*frontendNotificat
 	return client, unsubscribe
 }
 
-func (hub *frontendNotificationHub) broadcast(userID string, event frontendNotificationSocketEvent) {
+func (hub *notificationHub) broadcast(userID string, event notificationSocketEvent) {
 	hub.mu.RLock()
 	defer hub.mu.RUnlock()
 
@@ -61,7 +59,7 @@ func (hub *frontendNotificationHub) broadcast(userID string, event frontendNotif
 	}
 }
 
-func (h *FrontendHandler) WebSocketNotifications(c *gin.Context) {
+func (h *Handler) WebSocketNotifications(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
 	}
@@ -71,7 +69,7 @@ func (h *FrontendHandler) WebSocketNotifications(c *gin.Context) {
 		return
 	}
 
-	upgrader := frontendSocketUpgrader()
+	upgrader := socketUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
@@ -93,7 +91,7 @@ func (h *FrontendHandler) WebSocketNotifications(c *gin.Context) {
 	if err != nil {
 		unreadCount = 0
 	}
-	client.send <- frontendNotificationSocketEvent{
+	client.send <- notificationSocketEvent{
 		Type:        "ready",
 		UnreadCount: unreadCount,
 		Timestamp:   time.Now().Format(time.RFC3339),
@@ -106,13 +104,13 @@ func (h *FrontendHandler) WebSocketNotifications(c *gin.Context) {
 	}
 }
 
-func (h *FrontendHandler) broadcastNotification(userID string, notification frontendNotificationView) {
+func (h *Handler) broadcastNotification(userID string, notification notificationView) {
 	unreadCount, err := h.notificationUnreadCount(userID)
 	if err != nil {
 		unreadCount = 0
 	}
 
-	h.notificationHub.broadcast(userID, frontendNotificationSocketEvent{
+	h.notificationHub.broadcast(userID, notificationSocketEvent{
 		Type:         "notification",
 		Notification: &notification,
 		UnreadCount:  unreadCount,
@@ -120,24 +118,18 @@ func (h *FrontendHandler) broadcastNotification(userID string, notification fron
 	})
 }
 
-func (h *FrontendHandler) userFromSocketToken(c *gin.Context) (frontendUserView, bool) {
+func (h *Handler) userFromSocketToken(c *gin.Context) (userView, bool) {
 	token := strings.TrimSpace(c.Query("token"))
-	authCtx := auth.FromAuthorization("Bearer "+token, h.authTokenSecret)
-	if authCtx.Kind != "user" {
-		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "missing bearer token"})
-		return frontendUserView{}, false
-	}
-
-	user, err := h.lookupUserByID(authCtx.UserID)
+	user, err := h.authService.UserFromAuthorization("Bearer " + token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED", "message": "invalid bearer token"})
-		return frontendUserView{}, false
+		return userView{}, false
 	}
 
-	return buildFrontendUser(user), true
+	return *user, true
 }
 
-func frontendSocketUpgrader() websocket.Upgrader {
+func socketUpgrader() websocket.Upgrader {
 	return websocket.Upgrader{
 		CheckOrigin: func(request *http.Request) bool {
 			origin := request.Header.Get("Origin")

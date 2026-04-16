@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-func (h *FrontendHandler) UploadImage(c *gin.Context) {
+func (h *Handler) UploadImage(c *gin.Context) {
 	user, ok := h.requireUser(c)
 	if !ok {
 		return
@@ -85,6 +85,6 @@ func imageExtensionForContentType(contentType string) (string, bool) {
 	}
 }
 
-func (h *FrontendHandler) publicURL(relativePath string) string {
+func (h *Handler) publicURL(relativePath string) string {
 	return h.publicBaseURL + relativePath
 }

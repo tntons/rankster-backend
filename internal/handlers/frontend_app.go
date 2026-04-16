@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +25,8 @@ import (
 	"rankster-backend/internal/models"
 )
 
+var errForbidden = errors.New("forbidden")
+
 type frontendUserView struct {
 	ID            string `json:"id"`
 	Username      string `json:"username"`
@@ -36,9 +40,10 @@ type frontendUserView struct {
 }
 
 type frontendTierItem struct {
-	ID    string  `json:"id"`
-	Name  string  `json:"name"`
-	Emoji *string `json:"emoji,omitempty"`
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Emoji    *string `json:"emoji,omitempty"`
+	ImageURL *string `json:"imageUrl,omitempty"`
 }
 
 type frontendTierData struct {
@@ -80,6 +85,7 @@ type frontendRankPostView struct {
 	CreatedAt        string                `json:"createdAt"`
 	IsPublic         bool                  `json:"isPublic"`
 	ParticipantCount int                   `json:"participantCount"`
+	CanEdit          bool                  `json:"canEdit"`
 }
 
 type frontendMessageView struct {
@@ -241,6 +247,12 @@ type frontendGoogleAuthRequest struct {
 	Credential string `json:"credential"`
 }
 
+type frontendUpdateProfileRequest struct {
+	DisplayName string `json:"displayName"`
+	Bio         string `json:"bio"`
+	Avatar      string `json:"avatar"`
+}
+
 type frontendLeaderboardEntry struct {
 	Rank   int              `json:"rank"`
 	User   frontendUserView `json:"user"`
@@ -265,6 +277,8 @@ type frontendCreateCommentRequest struct {
 
 type FrontendHandler struct {
 	db              *gorm.DB
+	publicBaseURL   string
+	uploadDir       string
 	googleClientID  string
 	authTokenSecret string
 	chatHub         *frontendChatHub
@@ -273,14 +287,29 @@ type FrontendHandler struct {
 }
 
 func NewFrontendHandler(db *gorm.DB, cfg config.Config) *FrontendHandler {
+	publicBaseURL := strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/")
+	if publicBaseURL == "" {
+		publicBaseURL = "http://localhost:8000"
+	}
+	uploadDir := strings.TrimSpace(cfg.UploadDir)
+	if uploadDir == "" {
+		uploadDir = "uploads"
+	}
+
 	return &FrontendHandler{
 		db:              db,
+		publicBaseURL:   publicBaseURL,
+		uploadDir:       uploadDir,
 		googleClientID:  strings.TrimSpace(cfg.GoogleClientID),
 		authTokenSecret: strings.TrimSpace(cfg.AuthTokenSecret),
 		chatHub:         newFrontendChatHub(),
 		messageInboxHub: newFrontendMessageInboxHub(),
 		notificationHub: newFrontendNotificationHub(),
 	}
+}
+
+func (h *FrontendHandler) UploadDir() string {
+	return h.uploadDir
 }
 
 func (h *FrontendHandler) MockLogin(c *gin.Context) {
@@ -359,6 +388,67 @@ func (h *FrontendHandler) GetAuthMe(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"user": user})
+}
+
+func (h *FrontendHandler) UploadImage(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	const maxUploadBytes = 5 << 20
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "image file is required"})
+		return
+	}
+	if fileHeader.Size <= 0 || fileHeader.Size > maxUploadBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "image must be 5MB or smaller"})
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "failed to read image"})
+		return
+	}
+	defer file.Close()
+
+	header := make([]byte, 512)
+	n, _ := file.Read(header)
+	contentType := http.DetectContentType(header[:n])
+	ext, ok := imageExtensionForContentType(contentType)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "only JPEG, PNG, WebP, and GIF images are supported"})
+		return
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "failed to prepare image"})
+		return
+	}
+
+	uploadDir := filepath.Join(h.uploadDir, "images", user.ID)
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to prepare upload storage"})
+		return
+	}
+
+	filename := uuid.NewString() + ext
+	destination := filepath.Join(uploadDir, filename)
+	if err := c.SaveUploadedFile(fileHeader, destination); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to save image"})
+		return
+	}
+
+	relativeURL := "/uploads/images/" + user.ID + "/" + filename
+	c.JSON(http.StatusCreated, gin.H{
+		"url":         h.publicURL(relativeURL),
+		"path":        relativeURL,
+		"contentType": contentType,
+		"size":        fileHeader.Size,
+	})
 }
 
 type googleIdentity struct {
@@ -474,6 +564,44 @@ func (h *FrontendHandler) GetMainFeed(c *gin.Context) {
 func (h *FrontendHandler) GetProfileMe(c *gin.Context) {
 	user, ok := h.requireUser(c)
 	if !ok {
+		return
+	}
+
+	profile, err := h.buildProfileResponse(user.ID, &user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load profile"})
+		return
+	}
+
+	c.JSON(http.StatusOK, profile)
+}
+
+func (h *FrontendHandler) UpdateProfileMe(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	var body frontendUpdateProfileRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "invalid profile payload"})
+		return
+	}
+
+	displayName := strings.TrimSpace(body.DisplayName)
+	bio := strings.TrimSpace(body.Bio)
+	avatar := strings.TrimSpace(body.Avatar)
+	if displayName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "display name is required"})
+		return
+	}
+	if len(displayName) > 40 || len(bio) > 160 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "profile fields are too long"})
+		return
+	}
+
+	if err := h.updateCurrentProfile(user.ID, displayName, bio, avatar); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to update profile"})
 		return
 	}
 
@@ -809,6 +937,67 @@ func (h *FrontendHandler) GetPost(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, post)
+}
+
+func (h *FrontendHandler) UpdatePost(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	var body frontendCreateRankRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "invalid update payload"})
+		return
+	}
+	if strings.TrimSpace(body.Title) == "" || strings.TrimSpace(body.Category) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "title and category are required"})
+		return
+	}
+
+	post, err := h.updateRankPost(user, c.Param("id"), body)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "POST_NOT_FOUND", "message": "post not found"})
+			return
+		}
+		if errors.Is(err, errForbidden) {
+			c.JSON(http.StatusForbidden, gin.H{"code": "FORBIDDEN", "message": "you can only edit your own post"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to update post"})
+		return
+	}
+	c.JSON(http.StatusOK, post)
+}
+
+func (h *FrontendHandler) DeletePost(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	if err := h.deleteRankPost(user.ID, c.Param("id")); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "POST_NOT_FOUND", "message": "post not found"})
+			return
+		}
+		if errors.Is(err, errForbidden) {
+			c.JSON(http.StatusForbidden, gin.H{"code": "FORBIDDEN", "message": "you can only delete your own post"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to delete post"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 func (h *FrontendHandler) PostComment(c *gin.Context) {
@@ -1321,6 +1510,21 @@ func (h *FrontendHandler) followState(followerID, followingID string) (bool, err
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (h *FrontendHandler) updateCurrentProfile(userID string, displayName string, bio string, avatar string) error {
+	updates := map[string]any{
+		"display_name": displayName,
+		"bio":          bio,
+		"updated_at":   time.Now(),
+	}
+	if avatar == "" {
+		updates["avatar_url"] = nil
+	} else {
+		updates["avatar_url"] = avatar
+	}
+
+	return h.db.Model(&models.UserProfile{}).Where("user_id = ?", userID).Updates(updates).Error
 }
 
 func (h *FrontendHandler) setFollowState(followerID, followingID string, shouldFollow bool) (bool, error) {
@@ -1970,6 +2174,7 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 			Key      string
 			Position int
 			Emoji    *string
+			ImageURL *string
 		}{}
 		recordTierItems := func(key string, items []frontendTierItem) {
 			for index, item := range items {
@@ -1977,7 +2182,8 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 					Key      string
 					Position int
 					Emoji    *string
-				}{Key: key, Position: index, Emoji: item.Emoji}
+					ImageURL *string
+				}{Key: key, Position: index, Emoji: item.Emoji, ImageURL: item.ImageURL}
 			}
 		}
 		recordTierItems("S", body.Tiers.S)
@@ -1994,6 +2200,7 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 				ExternalID:     item.ID,
 				Name:           item.Name,
 				Emoji:          coalesceEmoji(item.Emoji, tierMeta.Emoji),
+				ImageURL:       coalesceImageURL(item.ImageURL, tierMeta.ImageURL),
 				TierKey:        tierMeta.Key,
 				TierPosition:   tierMeta.Position,
 				ListPosition:   index,
@@ -2036,6 +2243,188 @@ func (h *FrontendHandler) createRank(user frontendUserView, body frontendCreateR
 	}
 
 	return h.postByID(postID, &user)
+}
+
+func (h *FrontendHandler) updateRankPost(user frontendUserView, postID string, body frontendCreateRankRequest) (frontendRankPostView, error) {
+	now := time.Now()
+
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		var list models.TierListPost
+		if err := tx.
+			Preload("Post").
+			Where("post_id = ?", postID).
+			First(&list).Error; err != nil {
+			return err
+		}
+		if list.Post.CreatorID != user.ID {
+			return errForbidden
+		}
+
+		category, err := ensureCategory(tx, body.Category, now)
+		if err != nil {
+			return err
+		}
+
+		coverURL := fmt.Sprintf("http://localhost:8000/assets/ranks/%s.svg", slugify(body.Title))
+		asset := models.Asset{ID: "", URL: ""}
+		if err := tx.Where("url = ?", coverURL).First(&asset).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			asset = models.Asset{ID: generateUUID(), URL: coverURL, CreatedAt: now}
+			if err := tx.Create(&asset).Error; err != nil {
+				return err
+			}
+		}
+
+		visibility := list.Post.Visibility
+		if body.IsPublic != nil {
+			if *body.IsPublic {
+				visibility = "PUBLIC"
+			} else {
+				visibility = "PRIVATE"
+			}
+		}
+
+		tags := body.Tags
+		if len(tags) == 0 {
+			tags = []string{body.Category}
+		}
+
+		if err := tx.Model(&models.Post{}).
+			Where("id = ?", postID).
+			Updates(map[string]any{
+				"visibility":  visibility,
+				"category_id": category.ID,
+				"caption":     stringPtr(body.Description),
+				"updated_at":  now,
+			}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&models.TierListPost{}).
+			Where("post_id = ?", postID).
+			Updates(map[string]any{
+				"title":          body.Title,
+				"description":    stringPtr(body.Description),
+				"cover_asset_id": &asset.ID,
+				"tags":           pq.StringArray(tags),
+				"updated_at":     now,
+			}).Error; err != nil {
+			return err
+		}
+
+		if len(body.AllItems) == 0 {
+			return nil
+		}
+
+		if err := tx.Where("tier_list_post_id = ?", postID).Delete(&models.TierListItem{}).Error; err != nil {
+			return err
+		}
+
+		tierLookup := map[string]struct {
+			Key      string
+			Position int
+			Emoji    *string
+			ImageURL *string
+		}{}
+		recordTierItems := func(key string, items []frontendTierItem) {
+			for index, item := range items {
+				tierLookup[item.ID] = struct {
+					Key      string
+					Position int
+					Emoji    *string
+					ImageURL *string
+				}{Key: key, Position: index, Emoji: item.Emoji, ImageURL: item.ImageURL}
+			}
+		}
+		recordTierItems("S", body.Tiers.S)
+		recordTierItems("A", body.Tiers.A)
+		recordTierItems("B", body.Tiers.B)
+		recordTierItems("C", body.Tiers.C)
+		recordTierItems("D", body.Tiers.D)
+
+		for index, item := range body.AllItems {
+			tierMeta := tierLookup[item.ID]
+			entry := models.TierListItem{
+				ID:             generateUUID(),
+				TierListPostID: postID,
+				ExternalID:     item.ID,
+				Name:           item.Name,
+				Emoji:          coalesceEmoji(item.Emoji, tierMeta.Emoji),
+				ImageURL:       coalesceImageURL(item.ImageURL, tierMeta.ImageURL),
+				TierKey:        tierMeta.Key,
+				TierPosition:   tierMeta.Position,
+				ListPosition:   index,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			}
+			if err := tx.Create(&entry).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return frontendRankPostView{}, err
+	}
+
+	return h.postByID(postID, &user)
+}
+
+func (h *FrontendHandler) deleteRankPost(userID string, postID string) error {
+	return h.db.Transaction(func(tx *gorm.DB) error {
+		var list models.TierListPost
+		if err := tx.
+			Preload("Post").
+			Where("post_id = ?", postID).
+			First(&list).Error; err != nil {
+			return err
+		}
+		if list.Post.CreatorID != userID {
+			return errForbidden
+		}
+
+		commentIDQuery := tx.Model(&models.Comment{}).Select("id").Where("post_id = ?", postID)
+		if err := tx.Where("comment_id IN (?)", commentIDQuery).Delete(&models.CommentLike{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.Comment{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.PostLike{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.PostShare{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.PinnedPost{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("tier_list_post_id = ?", postID).Delete(&models.TierListItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.PostMetrics{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.TrendingTopic{}).
+			Where("source_post_id = ?", postID).
+			Updates(map[string]any{"source_post_id": nil}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.TierListPost{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("post_id = ?", postID).Delete(&models.RankPost{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&models.Post{ID: postID}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.UserStats{}).Where("user_id = ?", userID).
+			Update("ranks_created_count", gorm.Expr("GREATEST(ranks_created_count - 1, 0)")).Error
+	})
 }
 
 func (h *FrontendHandler) createComment(user frontendUserView, postID string, text string) (frontendCommentView, string, *frontendNotificationView, error) {
@@ -2256,7 +2645,8 @@ func (h *FrontendHandler) hydrateTierLists(lists []models.TierListPost, authUser
 
 	items := make([]frontendRankPostView, 0, len(lists))
 	for _, list := range lists {
-		items = append(items, hydrateTierList(list, commentsByPost[list.PostID], likedByPost[list.PostID]))
+		canEdit := authUser != nil && list.Post.CreatorID == authUser.ID
+		items = append(items, hydrateTierList(list, commentsByPost[list.PostID], likedByPost[list.PostID], canEdit))
 	}
 	return items, nil
 }
@@ -2323,7 +2713,7 @@ func (h *FrontendHandler) loadLikedPosts(postIDs []string, authUser *frontendUse
 	return out, nil
 }
 
-func hydrateTierList(list models.TierListPost, comments []frontendCommentView, isLiked bool) frontendRankPostView {
+func hydrateTierList(list models.TierListPost, comments []frontendCommentView, isLiked bool, canEdit bool) frontendRankPostView {
 	if comments == nil {
 		comments = []frontendCommentView{}
 	}
@@ -2344,6 +2734,7 @@ func hydrateTierList(list models.TierListPost, comments []frontendCommentView, i
 		CreatedAt:        relativeTime(list.CreatedAt),
 		IsPublic:         list.Post.Visibility == "PUBLIC",
 		ParticipantCount: list.ParticipantCount,
+		CanEdit:          canEdit,
 	}
 }
 
@@ -2412,7 +2803,7 @@ func buildTierData(items []models.TierListItem) frontendTierData {
 	})
 
 	for _, item := range sorted {
-		view := frontendTierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji}
+		view := frontendTierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: item.ImageURL}
 		switch item.TierKey {
 		case "S":
 			data.S = append(data.S, view)
@@ -2437,7 +2828,7 @@ func buildAllItems(items []models.TierListItem) []frontendTierItem {
 
 	out := make([]frontendTierItem, 0, len(sorted))
 	for _, item := range sorted {
-		out = append(out, frontendTierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji})
+		out = append(out, frontendTierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: item.ImageURL})
 	}
 	return out
 }
@@ -2557,6 +2948,25 @@ func assetURL(kind string, slug string) string {
 	return fmt.Sprintf("http://localhost:8000/assets/%s/%s.svg", kind, safeSlug(slug))
 }
 
+func imageExtensionForContentType(contentType string) (string, bool) {
+	switch contentType {
+	case "image/jpeg":
+		return ".jpg", true
+	case "image/png":
+		return ".png", true
+	case "image/webp":
+		return ".webp", true
+	case "image/gif":
+		return ".gif", true
+	default:
+		return "", false
+	}
+}
+
+func (h *FrontendHandler) publicURL(relativePath string) string {
+	return h.publicBaseURL + relativePath
+}
+
 func metricLikeCount(metrics *models.PostMetrics) int {
 	if metrics == nil {
 		return 0
@@ -2599,6 +3009,13 @@ func coalesceEmoji(primary, secondary *string) *string {
 		return primary
 	}
 	return secondary
+}
+
+func coalesceImageURL(primary, secondary *string) *string {
+	if value := optionalStringPtr(derefString(primary)); value != nil {
+		return value
+	}
+	return optionalStringPtr(derefString(secondary))
 }
 
 func slugify(value string) string {

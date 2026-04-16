@@ -14,6 +14,7 @@ type Config struct {
 	PublicBaseURL   string
 	GoogleClientID  string
 	AuthTokenSecret string
+	UploadDir       string
 }
 
 func Load() Config {
@@ -24,6 +25,7 @@ func Load() Config {
 		PublicBaseURL:   getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
 		GoogleClientID:  getEnv("GOOGLE_CLIENT_ID", ""),
 		AuthTokenSecret: getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
+		UploadDir:       getEnv("UPLOAD_DIR", "uploads"),
 	}
 }
 

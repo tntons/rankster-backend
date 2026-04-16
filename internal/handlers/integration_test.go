@@ -3,9 +3,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +160,55 @@ func TestProfileMeReturnsUserAndRankings(t *testing.T) {
 	}
 }
 
+func TestUploadImageRequiresAuthAndStoresImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Chdir(t.TempDir())
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	unauthBody, unauthContentType := multipartImageBody(t)
+	req := httptest.NewRequest(http.MethodPost, "/uploads/images", unauthBody)
+	req.Header.Set("Content-Type", unauthContentType)
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+
+	token := mockLoginToken(t, router, "me")
+	body, contentType := multipartImageBody(t)
+	req = httptest.NewRequest(http.MethodPost, "/uploads/images", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", contentType)
+	req.Host = "localhost:8000"
+	recorder = httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var response struct {
+		URL         string `json:"url"`
+		Path        string `json:"path"`
+		ContentType string `json:"contentType"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode upload response: %v", err)
+	}
+	if !strings.HasPrefix(response.URL, "http://localhost:8000/uploads/images/") || response.ContentType != "image/png" {
+		t.Fatalf("unexpected upload response: %+v", response)
+	}
+	if _, err := os.Stat(strings.TrimPrefix(response.Path, "/")); err != nil {
+		t.Fatalf("expected uploaded file on disk: %v", err)
+	}
+}
+
 func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -173,11 +224,11 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 		"description": "A database-backed ranking post",
 		"tags":        []string{"coffee", "drinks"},
 		"allItems": []map[string]any{
-			{"id": "a", "name": "Latte"},
+			{"id": "a", "name": "Latte", "imageUrl": "http://localhost:8000/uploads/images/test/latte.png"},
 			{"id": "b", "name": "Americano"},
 		},
 		"tiers": map[string]any{
-			"S": []map[string]any{{"id": "a", "name": "Latte"}},
+			"S": []map[string]any{{"id": "a", "name": "Latte", "imageUrl": "http://localhost:8000/uploads/images/test/latte.png"}},
 			"A": []map[string]any{{"id": "b", "name": "Americano"}},
 			"B": []map[string]any{},
 			"C": []map[string]any{},
@@ -207,12 +258,154 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 		User  struct {
 			Username string `json:"username"`
 		} `json:"user"`
+		AllItems []struct {
+			ImageURL string `json:"imageUrl"`
+		} `json:"allItems"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
 	if created.Title != "Best Coffee Orders" || created.User.Username != "me" {
 		t.Fatalf("unexpected create response: %+v", created)
+	}
+	if len(created.AllItems) == 0 || created.AllItems[0].ImageURL == "" {
+		t.Fatalf("expected imageUrl to persist in created rank, got %+v", created.AllItems)
+	}
+}
+
+func TestPostOwnerCanUpdateAndDeletePost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+	otherToken := mockLoginToken(t, router, "tierqueen")
+
+	payload := map[string]any{
+		"title":       "Editable Coffee Ranking",
+		"category":    "food",
+		"description": "Original description",
+		"tags":        []string{"coffee", "draft"},
+		"allItems": []map[string]any{
+			{"id": "latte", "name": "Latte"},
+			{"id": "mocha", "name": "Mocha"},
+		},
+		"tiers": map[string]any{
+			"S": []map[string]any{{"id": "latte", "name": "Latte"}},
+			"A": []map[string]any{},
+			"B": []map[string]any{{"id": "mocha", "name": "Mocha"}},
+			"C": []map[string]any{},
+			"D": []map[string]any{},
+		},
+		"isPublic": true,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/rank/create", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var created struct {
+		ID      string `json:"id"`
+		CanEdit bool   `json:"canEdit"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created post: %v", err)
+	}
+	if created.ID == "" || !created.CanEdit {
+		t.Fatalf("expected editable created post, got %+v", created)
+	}
+
+	updatePayload := map[string]any{
+		"title":       "Updated Coffee Ranking",
+		"category":    "food",
+		"description": "Updated description",
+		"tags":        []string{"coffee", "updated"},
+		"allItems": []map[string]any{
+			{"id": "latte", "name": "Latte"},
+			{"id": "mocha", "name": "Mocha"},
+		},
+		"tiers": map[string]any{
+			"S": []map[string]any{{"id": "mocha", "name": "Mocha"}},
+			"A": []map[string]any{},
+			"B": []map[string]any{},
+			"C": []map[string]any{},
+			"D": []map[string]any{{"id": "latte", "name": "Latte"}},
+		},
+		"isPublic": false,
+	}
+	body, err = json.Marshal(updatePayload)
+	if err != nil {
+		t.Fatalf("marshal update payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/feed/post/"+created.ID, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var updated struct {
+		ID          string   `json:"id"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+		IsPublic    bool     `json:"isPublic"`
+		CanEdit     bool     `json:"canEdit"`
+		Tiers       struct {
+			S []struct {
+				Name string `json:"name"`
+			} `json:"S"`
+			D []struct {
+				Name string `json:"name"`
+			} `json:"D"`
+		} `json:"tiers"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated post: %v", err)
+	}
+	if updated.Title != "Updated Coffee Ranking" || updated.Description != "Updated description" || updated.IsPublic || !updated.CanEdit || len(updated.Tags) != 2 || updated.Tags[1] != "updated" {
+		t.Fatalf("unexpected updated post: %+v", updated)
+	}
+	if len(updated.Tiers.S) != 1 || updated.Tiers.S[0].Name != "Mocha" || len(updated.Tiers.D) != 1 || updated.Tiers.D[0].Name != "Latte" {
+		t.Fatalf("tier list was not updated: %+v", updated.Tiers)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/feed/post/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+otherToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("other user delete status = %d, want %d; body=%s", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/feed/post/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/post/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("deleted post status = %d, want %d; body=%s", recorder.Code, http.StatusNotFound, recorder.Body.String())
 	}
 }
 
@@ -738,6 +931,29 @@ func mockLoginToken(t *testing.T, router http.Handler, username string) string {
 		t.Fatalf("decode login response: %v", err)
 	}
 	return response.AccessToken
+}
+
+func multipartImageBody(t *testing.T) (*bytes.Buffer, string) {
+	t.Helper()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	file, err := writer.CreateFormFile("file", "pixel.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// 1x1 transparent PNG.
+	file.Write([]byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89,
+	})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return body, writer.FormDataContentType()
 }
 
 func firstThreadID(t *testing.T, router http.Handler, token string) string {

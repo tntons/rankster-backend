@@ -165,6 +165,7 @@ type TierListItem struct {
 	ExternalID     string
 	Name           string
 	Emoji          *string
+	ImageURL       *string
 	TierKey        string
 	TierPosition   int
 	ListPosition   int

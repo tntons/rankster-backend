@@ -9,19 +9,24 @@ import (
 
 func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 	frontendHandler := NewFrontendHandler(db, cfg)
+	router.StaticFS("/uploads", gin.Dir(frontendHandler.UploadDir(), false))
 
 	router.POST("/auth/mock-login", frontendHandler.MockLogin)
 	router.POST("/auth/google", frontendHandler.GoogleLogin)
 	router.GET("/auth/me", frontendHandler.GetAuthMe)
+	router.POST("/uploads/images", frontendHandler.UploadImage)
 
 	router.GET("/feed/main", frontendHandler.GetMainFeed)
 	router.GET("/feed/post/:id", frontendHandler.GetPost)
+	router.PATCH("/feed/post/:id", frontendHandler.UpdatePost)
+	router.DELETE("/feed/post/:id", frontendHandler.DeletePost)
 	router.POST("/feed/post/:id/comments", frontendHandler.PostComment)
 	router.POST("/feed/comments/:id/like", frontendHandler.LikeComment)
 	router.DELETE("/feed/comments/:id/like", frontendHandler.UnlikeComment)
 	router.POST("/rank/create", frontendHandler.CreateRank)
 
 	router.GET("/profile/me", frontendHandler.GetProfileMe)
+	router.PATCH("/profile/me", frontendHandler.UpdateProfileMe)
 	router.POST("/profile/me/pinned/:postId", frontendHandler.PinProfilePost)
 	router.DELETE("/profile/me/pinned/:postId", frontendHandler.UnpinProfilePost)
 	router.GET("/profile/:username", frontendHandler.GetProfileByUsername)

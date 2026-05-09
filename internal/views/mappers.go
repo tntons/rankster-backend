@@ -132,10 +132,15 @@ func BuildAllItems(items []models.TierListItem) []TierItem {
 }
 
 func BuildMessageThread(thread models.MessageThread) MessageThread {
+	lastMessage := thread.LastMessage
+	if strings.TrimSpace(lastMessage) == "" {
+		lastMessage = "Say hi to start the conversation"
+	}
+
 	return MessageThread{
 		ID:          thread.ID,
 		User:        BuildUser(thread.PeerUser),
-		LastMessage: thread.LastMessage,
+		LastMessage: lastMessage,
 		Timestamp:   RelativeTime(thread.UpdatedAt),
 		Unread:      thread.UnreadCount,
 	}

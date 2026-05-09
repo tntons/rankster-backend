@@ -7,6 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"net/http"
+
+	"rankster-backend/internal/services"
 )
 
 func (h *Handler) GetMessages(c *gin.Context) {
@@ -36,6 +38,38 @@ func (h *Handler) GetMessageUnreadCount(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"unreadCount": unreadCount})
+}
+
+func (h *Handler) StartMessageThread(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Username string `json:"username"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Username) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "username is required"})
+		return
+	}
+
+	thread, err := h.messageService.StartThreadByUsername(user.ID, body.Username)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrCannotMessageSelf):
+			c.JSON(http.StatusBadRequest, gin.H{"code": "CANNOT_MESSAGE_SELF", "message": "you cannot message yourself"})
+		case errors.Is(err, services.ErrInvalidMessagePeer):
+			c.JSON(http.StatusBadRequest, gin.H{"code": "VALIDATION_ERROR", "message": "username is required"})
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"code": "USER_NOT_FOUND", "message": "user not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to start conversation"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, thread)
 }
 
 func (h *Handler) GetMessageThread(c *gin.Context) {

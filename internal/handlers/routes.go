@@ -38,6 +38,7 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 	router.GET("/search/categories", apiHandler.GetCategories)
 
 	router.GET("/messages/threads", apiHandler.GetMessages)
+	router.POST("/messages/threads", apiHandler.StartMessageThread)
 	router.GET("/messages/unread-count", apiHandler.GetMessageUnreadCount)
 	router.GET("/messages/ws", apiHandler.WebSocketMessageInbox)
 	router.GET("/messages/threads/:id", apiHandler.GetMessageThread)

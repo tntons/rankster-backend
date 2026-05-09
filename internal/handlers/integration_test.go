@@ -578,6 +578,66 @@ func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
 	}
 }
 
+func TestStartMessageThreadOpensConversationByUsername(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	body := bytes.NewBufferString(`{"username":"animequeen"}`)
+	req := httptest.NewRequest(http.MethodPost, "/messages/threads", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var response struct {
+		ID   string `json:"id"`
+		User struct {
+			Username string `json:"username"`
+		} `json:"user"`
+		Messages []struct {
+			Text string `json:"text"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.ID == "" || response.User.Username != "animequeen" || len(response.Messages) == 0 {
+		t.Fatalf("unexpected started thread payload: %+v", response)
+	}
+}
+
+func TestStartMessageThreadRejectsCurrentUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	body := bytes.NewBufferString(`{"username":"me"}`)
+	req := httptest.NewRequest(http.MethodPost, "/messages/threads", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
 func TestPostMessageAppendsConversation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -9,6 +10,11 @@ import (
 	"rankster-backend/internal/models"
 	"rankster-backend/internal/repositories"
 	"rankster-backend/internal/views"
+)
+
+var (
+	ErrInvalidMessagePeer = errors.New("message peer username is required")
+	ErrCannotMessageSelf  = errors.New("cannot message yourself")
 )
 
 type MessageService struct {
@@ -63,6 +69,61 @@ func (s *MessageService) ThreadDetail(userID, threadID string) (views.MessageThr
 	}
 
 	return views.BuildMessageThreadDetail(thread, userID), nil
+}
+
+func (s *MessageService) StartThreadByUsername(userID, username string) (views.MessageThreadDetail, error) {
+	normalizedUsername := strings.TrimPrefix(strings.TrimSpace(username), "@")
+	if normalizedUsername == "" {
+		return views.MessageThreadDetail{}, ErrInvalidMessagePeer
+	}
+
+	now := time.Now()
+	var threadID string
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var peer models.User
+		if err := tx.
+			Preload("Profile").
+			Preload("Stats").
+			Joins("JOIN user_profiles ON user_profiles.user_id = users.id").
+			Where("user_profiles.username = ?", normalizedUsername).
+			First(&peer).Error; err != nil {
+			return err
+		}
+		if peer.ID == userID {
+			return ErrCannotMessageSelf
+		}
+
+		var thread models.MessageThread
+		err := tx.Where("owner_user_id = ? AND peer_user_id = ?", userID, peer.ID).First(&thread).Error
+		if err == nil {
+			threadID = thread.ID
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		thread = models.MessageThread{
+			ID:          generateUUID(),
+			OwnerUserID: userID,
+			PeerUserID:  peer.ID,
+			LastMessage: "",
+			UnreadCount: 0,
+			UpdatedAt:   now,
+			CreatedAt:   now,
+		}
+		if err := tx.Create(&thread).Error; err != nil {
+			return err
+		}
+		threadID = thread.ID
+		return nil
+	})
+	if err != nil {
+		return views.MessageThreadDetail{}, err
+	}
+
+	return s.ThreadDetail(userID, threadID)
 }
 
 func (s *MessageService) CreateMessage(userID, threadID, text string) (views.CreatedMessage, error) {

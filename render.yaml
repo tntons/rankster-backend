@@ -21,6 +21,10 @@ services:
         generateValue: true
       - key: UPLOAD_DIR
         value: uploads
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: rankster/uploads
 
 databases:
   - name: rankster-postgres

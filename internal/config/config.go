@@ -9,26 +9,30 @@ import (
 )
 
 type Config struct {
-	DatabaseURL     string
-	Host            string
-	Port            string
-	PublicBaseURL   string
-	AllowedOrigins  []string
-	GoogleClientID  string
-	AuthTokenSecret string
-	UploadDir       string
+	DatabaseURL      string
+	Host             string
+	Port             string
+	PublicBaseURL    string
+	AllowedOrigins   []string
+	GoogleClientID   string
+	AuthTokenSecret  string
+	UploadDir        string
+	CloudinaryURL    string
+	CloudinaryFolder string
 }
 
 func Load() Config {
 	return Config{
-		DatabaseURL:     getEnv("DATABASE_URL", defaultDatabaseURL()),
-		Host:            getEnv("HOST", "0.0.0.0"),
-		Port:            getEnv("PORT", "8000"),
-		PublicBaseURL:   getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
-		AllowedOrigins:  parseCSVEnv("CORS_ALLOWED_ORIGINS"),
-		GoogleClientID:  getEnv("GOOGLE_CLIENT_ID", ""),
-		AuthTokenSecret: getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
-		UploadDir:       getEnv("UPLOAD_DIR", "uploads"),
+		DatabaseURL:      getEnv("DATABASE_URL", defaultDatabaseURL()),
+		Host:             getEnv("HOST", "0.0.0.0"),
+		Port:             getEnv("PORT", "8000"),
+		PublicBaseURL:    getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
+		AllowedOrigins:   parseCSVEnv("CORS_ALLOWED_ORIGINS"),
+		GoogleClientID:   getEnv("GOOGLE_CLIENT_ID", ""),
+		AuthTokenSecret:  getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
+		UploadDir:        getEnv("UPLOAD_DIR", "uploads"),
+		CloudinaryURL:    getEnv("CLOUDINARY_URL", ""),
+		CloudinaryFolder: getEnv("CLOUDINARY_FOLDER", "rankster/uploads"),
 	}
 }
 

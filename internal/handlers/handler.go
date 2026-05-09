@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
+	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
@@ -18,6 +20,9 @@ type Handler struct {
 	uploadDir           string
 	googleClientID      string
 	authTokenSecret     string
+	cloudinaryClient    *cloudinary.Cloudinary
+	cloudinaryConfigErr error
+	cloudinaryFolder    string
 	userRepo            *repositories.UserRepository
 	authService         *services.AuthService
 	feedService         *services.FeedService
@@ -41,6 +46,21 @@ func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
 	if uploadDir == "" {
 		uploadDir = "uploads"
 	}
+	cloudinaryFolder := strings.Trim(strings.TrimSpace(cfg.CloudinaryFolder), "/")
+	if cloudinaryFolder == "" {
+		cloudinaryFolder = "rankster/uploads"
+	}
+	var cloudinaryClient *cloudinary.Cloudinary
+	var cloudinaryConfigErr error
+	if cloudinaryURL := strings.TrimSpace(cfg.CloudinaryURL); cloudinaryURL != "" {
+		client, err := cloudinary.NewFromURL(cloudinaryURL)
+		if err != nil {
+			cloudinaryConfigErr = err
+			log.Printf("rankster: invalid CLOUDINARY_URL, cloud uploads are disabled: %v", err)
+		} else {
+			cloudinaryClient = client
+		}
+	}
 
 	chatHub := newChatHub()
 	userRepo := repositories.NewUserRepository(db)
@@ -61,6 +81,9 @@ func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
 		uploadDir:           uploadDir,
 		googleClientID:      strings.TrimSpace(cfg.GoogleClientID),
 		authTokenSecret:     strings.TrimSpace(cfg.AuthTokenSecret),
+		cloudinaryClient:    cloudinaryClient,
+		cloudinaryConfigErr: cloudinaryConfigErr,
+		cloudinaryFolder:    cloudinaryFolder,
 		userRepo:            userRepo,
 		authService:         services.NewAuthService(db, userRepo, strings.TrimSpace(cfg.AuthTokenSecret), strings.TrimSpace(cfg.GoogleClientID)),
 		feedService:         services.NewFeedService(tierListRepo, rankPostService),

@@ -99,6 +99,10 @@ That means a fresh local database is enough to get started.
 - `DATABASE_URL`: PostgreSQL connection string
 - `HOST`: API bind host, default `0.0.0.0`
 - `PORT`: API port, default `8000`
+- `PUBLIC_BASE_URL`: public API origin used for locally stored asset URLs, default `http://localhost:8000`
+- `UPLOAD_DIR`: local upload directory used when cloud storage is not configured, default `uploads`
+- `CLOUDINARY_URL`: optional Cloudinary API URL for durable image uploads, for example `cloudinary://API_KEY:API_SECRET@CLOUD_NAME`
+- `CLOUDINARY_FOLDER`: optional Cloudinary folder prefix, default `rankster/uploads`
 - `GOTOOLCHAIN`: recommended `local` if your machine has an older but compatible local Go toolchain
 
 ## Quick Checks

@@ -12,6 +12,11 @@ import (
 )
 
 func (h *Handler) MockLogin(c *gin.Context) {
+	if !h.enableMockAuth {
+		c.JSON(http.StatusForbidden, gin.H{"code": "MOCK_AUTH_DISABLED", "message": "mock auth is disabled"})
+		return
+	}
+
 	if !h.ensureDB(c) {
 		return
 	}

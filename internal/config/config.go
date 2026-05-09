@@ -16,6 +16,7 @@ type Config struct {
 	AllowedOrigins   []string
 	GoogleClientID   string
 	AuthTokenSecret  string
+	EnableMockAuth   bool
 	UploadDir        string
 	CloudinaryURL    string
 	CloudinaryFolder string
@@ -30,6 +31,7 @@ func Load() Config {
 		AllowedOrigins:   parseCSVEnv("CORS_ALLOWED_ORIGINS"),
 		GoogleClientID:   getEnv("GOOGLE_CLIENT_ID", ""),
 		AuthTokenSecret:  getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
+		EnableMockAuth:   parseBoolEnv("ENABLE_MOCK_AUTH", false),
 		UploadDir:        getEnv("UPLOAD_DIR", "uploads"),
 		CloudinaryURL:    getEnv("CLOUDINARY_URL", ""),
 		CloudinaryFolder: getEnv("CLOUDINARY_FOLDER", "rankster/uploads"),
@@ -59,6 +61,14 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func parseCSVEnv(key string) []string {

@@ -10,6 +10,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("CORS_ALLOWED_ORIGINS", "")
 	t.Setenv("GOOGLE_CLIENT_ID", "")
 	t.Setenv("AUTH_TOKEN_SECRET", "")
+	t.Setenv("ENABLE_MOCK_AUTH", "")
 
 	cfg := Load()
 
@@ -38,6 +39,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.AuthTokenSecret != "rankster-dev-secret" {
 		t.Fatalf("unexpected default AUTH_TOKEN_SECRET: %s", cfg.AuthTokenSecret)
 	}
+	if cfg.EnableMockAuth {
+		t.Fatal("expected mock auth to be disabled by default")
+	}
 }
 
 func TestDefaultDatabaseURLFallsBackToPostgres(t *testing.T) {
@@ -56,6 +60,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("CORS_ALLOWED_ORIGINS", "https://rankster-frontend.vercel.app, https://rankster-frontend.vercel.app/ , https://example.com")
 	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("AUTH_TOKEN_SECRET", "super-secret")
+	t.Setenv("ENABLE_MOCK_AUTH", "true")
 
 	cfg := Load()
 
@@ -79,5 +84,8 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.AuthTokenSecret != "super-secret" {
 		t.Fatalf("unexpected AUTH_TOKEN_SECRET: %s", cfg.AuthTokenSecret)
+	}
+	if !cfg.EnableMockAuth {
+		t.Fatal("expected ENABLE_MOCK_AUTH override to enable mock auth")
 	}
 }

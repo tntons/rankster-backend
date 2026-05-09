@@ -1190,5 +1190,6 @@ func testConfig() config.Config {
 	return config.Config{
 		PublicBaseURL:   "http://localhost:8000",
 		AuthTokenSecret: "test-auth-secret",
+		EnableMockAuth:  true,
 	}
 }

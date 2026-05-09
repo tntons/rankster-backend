@@ -20,6 +20,7 @@ type Handler struct {
 	uploadDir           string
 	googleClientID      string
 	authTokenSecret     string
+	enableMockAuth      bool
 	cloudinaryClient    *cloudinary.Cloudinary
 	cloudinaryConfigErr error
 	cloudinaryFolder    string
@@ -81,6 +82,7 @@ func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
 		uploadDir:           uploadDir,
 		googleClientID:      strings.TrimSpace(cfg.GoogleClientID),
 		authTokenSecret:     strings.TrimSpace(cfg.AuthTokenSecret),
+		enableMockAuth:      cfg.EnableMockAuth,
 		cloudinaryClient:    cloudinaryClient,
 		cloudinaryConfigErr: cloudinaryConfigErr,
 		cloudinaryFolder:    cloudinaryFolder,

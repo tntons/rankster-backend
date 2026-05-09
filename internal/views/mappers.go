@@ -28,7 +28,7 @@ func BuildUser(user models.User) User {
 
 	avatar := AssetURL("avatars", profile.Username)
 	if profile.AvatarURL != nil && strings.TrimSpace(*profile.AvatarURL) != "" {
-		avatar = PublicURL(*profile.AvatarURL)
+		avatar = AvatarURLOrFallback(profile.Username, *profile.AvatarURL)
 	}
 
 	return User{
@@ -261,6 +261,38 @@ func PublicURLPtr(value *string) *string {
 	}
 	nextValue := PublicURL(*value)
 	return &nextValue
+}
+
+func AvatarURLOrFallback(username string, value string) string {
+	avatar := PublicURL(value)
+	if isMissingLocalUploadURL(avatar) {
+		return AssetURL("avatars", username)
+	}
+	return avatar
+}
+
+func isMissingLocalUploadURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" || !strings.HasPrefix(parsed.Path, "/uploads/") {
+		return false
+	}
+
+	publicBase, err := url.Parse(publicBaseURL())
+	if err != nil {
+		publicBase = nil
+	}
+	isLocalUploadHost := parsed.Host == "localhost:8000" || parsed.Host == "127.0.0.1:8000"
+	if publicBase != nil && parsed.Host == publicBase.Host {
+		isLocalUploadHost = true
+	}
+	if !isLocalUploadHost {
+		return false
+	}
+
+	if _, err := os.Stat(strings.TrimPrefix(parsed.Path, "/")); err != nil {
+		return true
+	}
+	return false
 }
 
 func publicBaseURL() string {

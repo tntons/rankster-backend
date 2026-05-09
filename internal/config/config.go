@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"strings"
 )
 
 type Config struct {
@@ -12,6 +13,7 @@ type Config struct {
 	Host            string
 	Port            string
 	PublicBaseURL   string
+	AllowedOrigins  []string
 	GoogleClientID  string
 	AuthTokenSecret string
 	UploadDir       string
@@ -23,6 +25,7 @@ func Load() Config {
 		Host:            getEnv("HOST", "0.0.0.0"),
 		Port:            getEnv("PORT", "8000"),
 		PublicBaseURL:   getEnv("PUBLIC_BASE_URL", "http://localhost:8000"),
+		AllowedOrigins:  parseCSVEnv("CORS_ALLOWED_ORIGINS"),
 		GoogleClientID:  getEnv("GOOGLE_CLIENT_ID", ""),
 		AuthTokenSecret: getEnv("AUTH_TOKEN_SECRET", "rankster-dev-secret"),
 		UploadDir:       getEnv("UPLOAD_DIR", "uploads"),
@@ -52,4 +55,27 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseCSVEnv(key string) []string {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		value := strings.TrimRight(strings.TrimSpace(part), "/")
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		values = append(values, value)
+	}
+	return values
 }

@@ -27,7 +27,7 @@ func main() {
 	}
 	log.Printf("database connected: %s", cfg.DatabaseURL)
 
-	router := server.BuildRouter(database)
+	router := server.BuildRouter(database, cfg.AllowedOrigins...)
 	handlers.RegisterRoutes(router, database, cfg)
 
 	addr := cfg.Host + ":" + cfg.Port

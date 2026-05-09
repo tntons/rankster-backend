@@ -10,12 +10,12 @@ import (
 	"gorm.io/gorm"
 )
 
-func BuildRouter(db *gorm.DB) *gin.Engine {
+func BuildRouter(db *gorm.DB, allowedOrigins ...string) *gin.Engine {
 	router := gin.New()
-	router.Use(gin.Logger(), gin.Recovery(), devCORS())
+	router.Use(gin.Logger(), gin.Recovery(), cors(allowedOrigins))
 	router.NoRoute(func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
-			writeDevCORSHeaders(c)
+			writeCORSHeaders(c, allowedOrigins)
 			c.Status(http.StatusNoContent)
 			return
 		}
@@ -29,9 +29,9 @@ func BuildRouter(db *gorm.DB) *gin.Engine {
 	return router
 }
 
-func devCORS() gin.HandlerFunc {
+func cors(allowedOrigins []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		writeDevCORSHeaders(c)
+		writeCORSHeaders(c, allowedOrigins)
 
 		if c.Request.Method == http.MethodOptions {
 			c.Status(http.StatusNoContent)
@@ -44,8 +44,12 @@ func devCORS() gin.HandlerFunc {
 }
 
 func writeDevCORSHeaders(c *gin.Context) {
+	writeCORSHeaders(c, nil)
+}
+
+func writeCORSHeaders(c *gin.Context, allowedOrigins []string) {
 	origin := c.GetHeader("Origin")
-	if origin == "" || !isAllowedDevOrigin(origin) {
+	if origin == "" || !isAllowedOrigin(origin, allowedOrigins) {
 		return
 	}
 
@@ -57,6 +61,22 @@ func writeDevCORSHeaders(c *gin.Context) {
 
 func isAllowedDevOrigin(origin string) bool {
 	return strings.HasPrefix(origin, "http://localhost:") || strings.HasPrefix(origin, "http://127.0.0.1:")
+}
+
+func isAllowedOrigin(origin string, allowedOrigins []string) bool {
+	normalizedOrigin := strings.TrimRight(origin, "/")
+	if isAllowedDevOrigin(normalizedOrigin) {
+		return true
+	}
+
+	for _, allowedOrigin := range allowedOrigins {
+		normalizedAllowedOrigin := strings.TrimRight(strings.TrimSpace(allowedOrigin), "/")
+		if normalizedAllowedOrigin == "*" || normalizedAllowedOrigin == normalizedOrigin {
+			return true
+		}
+	}
+
+	return false
 }
 
 func serveAvatarSVG(c *gin.Context) {

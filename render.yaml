@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: rankster-backend
+    runtime: go
+    plan: free
+    buildCommand: go build -tags netgo -ldflags '-s -w' -o app ./cmd/api
+    startCommand: ./app
+    healthCheckPath: /healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rankster-postgres
+          property: connectionString
+      - key: PUBLIC_BASE_URL
+        value: https://rankster-backend.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://rankster-frontend.vercel.app,https://rankster-frontend-tntons-projects.vercel.app,https://rankster-frontend-tntons-tntons-projects.vercel.app
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: AUTH_TOKEN_SECRET
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: uploads
+
+databases:
+  - name: rankster-postgres
+    plan: free

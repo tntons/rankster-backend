@@ -7,6 +7,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("HOST", "")
 	t.Setenv("PORT", "")
 	t.Setenv("PUBLIC_BASE_URL", "")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
 	t.Setenv("GOOGLE_CLIENT_ID", "")
 	t.Setenv("AUTH_TOKEN_SECRET", "")
 
@@ -27,6 +28,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.PublicBaseURL != "http://localhost:8000" {
 		t.Fatalf("unexpected default PUBLIC_BASE_URL: %s", cfg.PublicBaseURL)
+	}
+	if len(cfg.AllowedOrigins) != 0 {
+		t.Fatalf("unexpected default CORS_ALLOWED_ORIGINS: %v", cfg.AllowedOrigins)
 	}
 	if cfg.GoogleClientID != "" {
 		t.Fatalf("unexpected default GOOGLE_CLIENT_ID: %s", cfg.GoogleClientID)
@@ -49,6 +53,7 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	t.Setenv("HOST", "127.0.0.1")
 	t.Setenv("PORT", "9000")
 	t.Setenv("PUBLIC_BASE_URL", "http://localhost:9000")
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://rankster-frontend.vercel.app, https://rankster-frontend.vercel.app/ , https://example.com")
 	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("AUTH_TOKEN_SECRET", "super-secret")
 
@@ -65,6 +70,9 @@ func TestLoadUsesEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.PublicBaseURL != "http://localhost:9000" {
 		t.Fatalf("unexpected PUBLIC_BASE_URL: %s", cfg.PublicBaseURL)
+	}
+	if got, want := cfg.AllowedOrigins, []string{"https://rankster-frontend.vercel.app", "https://example.com"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("unexpected CORS_ALLOWED_ORIGINS: %v", got)
 	}
 	if cfg.GoogleClientID != "google-client-id" {
 		t.Fatalf("unexpected GOOGLE_CLIENT_ID: %s", cfg.GoogleClientID)

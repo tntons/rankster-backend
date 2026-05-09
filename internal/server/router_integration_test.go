@@ -64,3 +64,21 @@ func TestBuildRouterHandlesDevCORSPreflight(t *testing.T) {
 		t.Fatalf("allow-methods = %q, want DELETE included", got)
 	}
 }
+
+func TestBuildRouterHandlesConfiguredCORSPreflight(t *testing.T) {
+	t.Parallel()
+
+	router := BuildRouter(nil, "https://rankster-frontend.vercel.app")
+	req := httptest.NewRequest(http.MethodOptions, "/healthz", nil)
+	req.Header.Set("Origin", "https://rankster-frontend.vercel.app")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "https://rankster-frontend.vercel.app" {
+		t.Fatalf("allow-origin = %q, want production frontend origin", got)
+	}
+}

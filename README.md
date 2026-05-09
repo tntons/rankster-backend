@@ -100,6 +100,7 @@ That means a fresh local database is enough to get started.
 - `HOST`: API bind host, default `0.0.0.0`
 - `PORT`: API port, default `8000`
 - `PUBLIC_BASE_URL`: public API origin used for locally stored asset URLs, default `http://localhost:8000`
+- `ENABLE_MOCK_AUTH`: set to `true` only for local/dev mock-login testing, default `false`
 - `UPLOAD_DIR`: local upload directory used when cloud storage is not configured, default `uploads`
 - `CLOUDINARY_URL`: optional Cloudinary API URL for durable image uploads, for example `cloudinary://API_KEY:API_SECRET@CLOUD_NAME`
 - `CLOUDINARY_FOLDER`: optional Cloudinary folder prefix, default `rankster/uploads`

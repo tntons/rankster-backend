@@ -670,16 +670,6 @@ func upsertFrontendUser(tx *gorm.DB, baseURL string, now time.Time, seed fronten
 		return userID, nil
 	}
 
-	if err := tx.Model(&models.UserProfile{}).Where("user_id = ?", userID).Updates(map[string]any{
-		"display_name": displayName,
-		"bio":          bio,
-		"avatar_url":   avatarURL,
-		"verified":     seed.Verified,
-		"updated_at":   now,
-	}).Error; err != nil {
-		return "", err
-	}
-
 	var stats models.UserStats
 	if err := tx.Where("user_id = ?", userID).First(&stats).Error; err != nil {
 		if err != gorm.ErrRecordNotFound {
@@ -691,13 +681,6 @@ func upsertFrontendUser(tx *gorm.DB, baseURL string, now time.Time, seed fronten
 		if err := tx.Create(&stats).Error; err != nil {
 			return "", err
 		}
-	} else if err := tx.Model(&models.UserStats{}).Where("user_id = ?", userID).Updates(map[string]any{
-		"ranks_created_count": seed.TotalRankings,
-		"followers_count":     seed.Followers,
-		"following_count":     seed.Following,
-		"updated_at":          now,
-	}).Error; err != nil {
-		return "", err
 	}
 
 	return userID, nil

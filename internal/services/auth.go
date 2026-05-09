@@ -202,12 +202,19 @@ func (s *AuthService) createGoogleUser(tx *gorm.DB, identity GoogleIdentity, out
 }
 
 func (s *AuthService) refreshGoogleUser(tx *gorm.DB, userID string, identity GoogleIdentity) error {
-	displayName := chooseDisplayName(identity)
 	updates := map[string]any{
-		"display_name": displayName,
-		"verified":     identity.EmailVerified,
+		"verified": identity.EmailVerified,
 	}
-	if avatar := strings.TrimSpace(identity.PictureURL); avatar != "" {
+
+	var profile models.UserProfile
+	if err := tx.Where("user_id = ?", userID).First(&profile).Error; err != nil {
+		return err
+	}
+
+	if profile.DisplayName == nil || strings.TrimSpace(*profile.DisplayName) == "" {
+		updates["display_name"] = chooseDisplayName(identity)
+	}
+	if avatar := strings.TrimSpace(identity.PictureURL); avatar != "" && (profile.AvatarURL == nil || strings.TrimSpace(*profile.AvatarURL) == "") {
 		updates["avatar_url"] = avatar
 	}
 

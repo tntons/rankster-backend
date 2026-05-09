@@ -147,6 +147,7 @@ components:
         id: { type: string }
         name: { type: string }
         emoji: { type: string, nullable: true }
+        imageUrl: { type: string, nullable: true }
     FrontendTierData:
       type: object
       required: [S, A, B, C, D]
@@ -156,6 +157,15 @@ components:
         B: { type: array, items: { $ref: "#/components/schemas/FrontendTierItem" } }
         C: { type: array, items: { $ref: "#/components/schemas/FrontendTierItem" } }
         D: { type: array, items: { $ref: "#/components/schemas/FrontendTierItem" } }
+    FrontendTierRow:
+      type: object
+      required: [id, label, items]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/FrontendTierItem" }
     FrontendComment:
       type: object
       required: [id, user, text, createdAt, likes]
@@ -175,6 +185,9 @@ components:
         category: { type: string }
         coverImage: { type: string }
         tiers: { $ref: "#/components/schemas/FrontendTierData" }
+        tierRows:
+          type: array
+          items: { $ref: "#/components/schemas/FrontendTierRow" }
         allItems:
           type: array
           items: { $ref: "#/components/schemas/FrontendTierItem" }
@@ -294,16 +307,24 @@ components:
         value: { type: string, nullable: true }
     RankCreateRequest:
       type: object
-      required: [categoryId, templateId, tierKey, imageAssetId]
+      required: [title, category, description, tiers, allItems, isPublic]
       properties:
-        categoryId: { type: string }
-        templateId: { type: string }
-        tierKey: { type: string, example: "A" }
-        imageAssetId: { type: string, description: "Previously uploaded asset id." }
-        caption: { type: string, nullable: true }
-        subjectTitle: { type: string, nullable: true }
-        subjectUrl: { type: string, nullable: true }
-        visibility: { type: string, enum: [PUBLIC, UNLISTED, PRIVATE], default: PUBLIC }
+        title: { type: string }
+        category: { type: string }
+        description: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        tiers: { $ref: "#/components/schemas/FrontendTierData" }
+        tierRows:
+          type: array
+          description: Ordered frontend tier rows. When provided, this preserves renamed, deleted, custom, and empty tier rows.
+          items: { $ref: "#/components/schemas/FrontendTierRow" }
+        allItems:
+          type: array
+          items: { $ref: "#/components/schemas/FrontendTierItem" }
+        isPublic: { type: boolean, default: true }
+        sourcePostId: { type: string, nullable: true }
     AdvancedUserStats:
       type: object
       required: [userId, totals]

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -164,13 +165,21 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 		if len(tags) == 0 {
 			tags = []string{body.Category}
 		}
+		tierRows := normalizedTierRowsForRequest(body)
+		allItems := allItemsForRequest(body)
+		tierConfig, err := marshalTierConfig(tierRows)
+		if err != nil {
+			return err
+		}
+
 		tierPost := models.TierListPost{
 			PostID:           postID,
 			Title:            body.Title,
 			Description:      stringPtr(body.Description),
 			CoverAssetID:     &asset.ID,
 			Tags:             pq.StringArray(tags),
-			ParticipantCount: max(1, len(body.AllItems)),
+			TierConfig:       tierConfig,
+			ParticipantCount: max(1, len(allItems)),
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
@@ -178,7 +187,7 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 			return err
 		}
 
-		if err := createTierListItems(tx, postID, body.Tiers, body.AllItems, now); err != nil {
+		if err := createTierListItems(tx, postID, body.Tiers, tierRows, allItems, now); err != nil {
 			return err
 		}
 
@@ -272,6 +281,12 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 			return err
 		}
 
+		tierRows := normalizedTierRowsForRequest(body)
+		tierConfig, err := marshalTierConfig(tierRows)
+		if err != nil {
+			return err
+		}
+
 		if err := tx.Model(&models.TierListPost{}).
 			Where("post_id = ?", postID).
 			Updates(map[string]any{
@@ -279,12 +294,14 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 				"description":    stringPtr(body.Description),
 				"cover_asset_id": &asset.ID,
 				"tags":           pq.StringArray(tags),
+				"tier_config":    tierConfig,
 				"updated_at":     now,
 			}).Error; err != nil {
 			return err
 		}
 
-		if len(body.AllItems) == 0 {
+		allItems := allItemsForRequest(body)
+		if len(allItems) == 0 {
 			return nil
 		}
 
@@ -292,7 +309,7 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 			return err
 		}
 
-		return createTierListItems(tx, postID, body.Tiers, body.AllItems, now)
+		return createTierListItems(tx, postID, body.Tiers, tierRows, allItems, now)
 	})
 	if err != nil {
 		return views.RankPost{}, err
@@ -558,7 +575,7 @@ func (s *RankPostService) commentsByPost(postIDs []string, authUser *views.User)
 	return out, nil
 }
 
-func createTierListItems(tx *gorm.DB, postID string, tiers views.TierData, allItems []views.TierItem, now time.Time) error {
+func createTierListItems(tx *gorm.DB, postID string, tiers views.TierData, tierRows []views.TierRow, allItems []views.TierItem, now time.Time) error {
 	tierLookup := map[string]struct {
 		Key      string
 		Position int
@@ -575,11 +592,17 @@ func createTierListItems(tx *gorm.DB, postID string, tiers views.TierData, allIt
 			}{Key: key, Position: index, Emoji: item.Emoji, ImageURL: item.ImageURL}
 		}
 	}
-	recordTierItems("S", tiers.S)
-	recordTierItems("A", tiers.A)
-	recordTierItems("B", tiers.B)
-	recordTierItems("C", tiers.C)
-	recordTierItems("D", tiers.D)
+	if tierRows != nil {
+		for _, row := range tierRows {
+			recordTierItems(row.ID, row.Items)
+		}
+	} else {
+		recordTierItems("S", tiers.S)
+		recordTierItems("A", tiers.A)
+		recordTierItems("B", tiers.B)
+		recordTierItems("C", tiers.C)
+		recordTierItems("D", tiers.D)
+	}
 
 	for index, item := range allItems {
 		tierMeta := tierLookup[item.ID]
@@ -602,4 +625,67 @@ func createTierListItems(tx *gorm.DB, postID string, tiers views.TierData, allIt
 	}
 
 	return nil
+}
+
+func normalizedTierRowsForRequest(body views.CreateRankRequest) []views.TierRow {
+	if body.TierRows != nil {
+		return normalizeTierRows(body.TierRows)
+	}
+	return nil
+}
+
+func normalizeTierRows(rows []views.TierRow) []views.TierRow {
+	out := make([]views.TierRow, 0, len(rows))
+	for index, row := range rows {
+		id := strings.TrimSpace(row.ID)
+		if id == "" {
+			id = fmt.Sprintf("tier-%d", index+1)
+		}
+		label := strings.TrimSpace(row.Label)
+		if label == "" {
+			label = id
+		}
+		out = append(out, views.TierRow{
+			ID:    id,
+			Label: label,
+			Items: append([]views.TierItem{}, row.Items...),
+		})
+	}
+	return out
+}
+
+func marshalTierConfig(rows []views.TierRow) (string, error) {
+	if rows == nil {
+		return "", nil
+	}
+	metadata := make([]views.TierRow, 0, len(rows))
+	for _, row := range rows {
+		metadata = append(metadata, views.TierRow{ID: row.ID, Label: row.Label})
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func allItemsForRequest(body views.CreateRankRequest) []views.TierItem {
+	out := append([]views.TierItem{}, body.AllItems...)
+	seen := map[string]struct{}{}
+	for _, item := range out {
+		seen[item.ID] = struct{}{}
+	}
+	if body.TierRows == nil {
+		return out
+	}
+	for _, row := range body.TierRows {
+		for _, item := range row.Items {
+			if _, ok := seen[item.ID]; ok {
+				continue
+			}
+			out = append(out, item)
+			seen[item.ID] = struct{}{}
+		}
+	}
+	return out
 }

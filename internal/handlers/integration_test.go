@@ -273,6 +273,149 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	}
 }
 
+func TestRankTierRowsPersistCustomLabelsAndDeletedRows(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	payload := map[string]any{
+		"title":       "Custom Tier Ranking",
+		"category":    "food",
+		"description": "A ranking with custom tiers",
+		"tags":        []string{"custom"},
+		"allItems": []map[string]any{
+			{"id": "ramen", "name": "Ramen"},
+			{"id": "pho", "name": "Pho"},
+		},
+		"tierRows": []map[string]any{
+			{
+				"id":    "legend",
+				"label": "  Legends  ",
+				"items": []map[string]any{{"id": "ramen", "name": "Ramen"}},
+			},
+			{
+				"id":    "try-next",
+				"label": "Worth Trying",
+				"items": []map[string]any{{"id": "pho", "name": "Pho"}},
+			},
+		},
+		"isPublic": true,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal create payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/rank/create", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var created struct {
+		ID       string `json:"id"`
+		TierRows []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+			Items []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"items"`
+		} `json:"tierRows"`
+		Tiers struct {
+			S []struct {
+				ID string `json:"id"`
+			} `json:"S"`
+		} `json:"tiers"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created post: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatalf("expected created post id")
+	}
+	if len(created.TierRows) != 2 || created.TierRows[0].ID != "legend" || created.TierRows[0].Label != "Legends" || len(created.TierRows[0].Items) != 1 || created.TierRows[0].Items[0].ID != "ramen" {
+		t.Fatalf("custom tierRows were not returned on create: %+v", created.TierRows)
+	}
+	if len(created.Tiers.S) != 0 {
+		t.Fatalf("legacy tiers should remain populated only for matching default keys, got %+v", created.Tiers)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/post/"+created.ID, nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("fetch status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var fetched struct {
+		TierRows []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+		} `json:"tierRows"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &fetched); err != nil {
+		t.Fatalf("decode fetched post: %v", err)
+	}
+	if len(fetched.TierRows) != 2 || fetched.TierRows[1].ID != "try-next" || fetched.TierRows[1].Label != "Worth Trying" {
+		t.Fatalf("custom tierRows were not persisted on fetch: %+v", fetched.TierRows)
+	}
+
+	updatePayload := map[string]any{
+		"title":       "Custom Tier Ranking",
+		"category":    "food",
+		"description": "A ranking with one custom tier removed",
+		"tags":        []string{"custom"},
+		"allItems": []map[string]any{
+			{"id": "ramen", "name": "Ramen"},
+		},
+		"tierRows": []map[string]any{
+			{
+				"id":    "legend",
+				"label": "Hall of Fame",
+				"items": []map[string]any{{"id": "ramen", "name": "Ramen"}},
+			},
+		},
+		"isPublic": true,
+	}
+	body, err = json.Marshal(updatePayload)
+	if err != nil {
+		t.Fatalf("marshal update payload: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/feed/post/"+created.ID, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var updated struct {
+		TierRows []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"tierRows"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode updated post: %v", err)
+	}
+	if len(updated.TierRows) != 1 || updated.TierRows[0].ID != "legend" || updated.TierRows[0].Label != "Hall of Fame" {
+		t.Fatalf("deleted row or renamed label did not persist: %+v", updated.TierRows)
+	}
+}
+
 func TestPostOwnerCanUpdateAndDeletePost(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

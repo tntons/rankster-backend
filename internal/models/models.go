@@ -150,6 +150,7 @@ type TierListPost struct {
 	Description      *string
 	CoverAssetID     *string        `gorm:"type:uuid;index"`
 	Tags             pq.StringArray `gorm:"type:text[]"`
+	TierConfig       string         `gorm:"type:text"`
 	ParticipantCount int
 	CreatedAt        time.Time
 	UpdatedAt        time.Time

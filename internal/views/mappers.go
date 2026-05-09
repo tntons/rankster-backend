@@ -1,6 +1,7 @@
 package views
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -76,6 +77,7 @@ func BuildRankPost(list models.TierListPost, comments []Comment, isLiked bool, c
 		Category:         list.Post.Category.Slug,
 		CoverImage:       AssetOrFallback(list.CoverAsset, "ranks", slugify(list.Title)),
 		Tiers:            BuildTierData(list.Items),
+		TierRows:         BuildTierRows(list.TierConfig, list.Items),
 		AllItems:         BuildAllItems(list.Items),
 		Description:      derefString(list.Description),
 		Tags:             append([]string{}, list.Tags...),
@@ -88,6 +90,66 @@ func BuildRankPost(list models.TierListPost, comments []Comment, isLiked bool, c
 		ParticipantCount: list.ParticipantCount,
 		CanEdit:          canEdit,
 	}
+}
+
+func BuildTierRows(config string, items []models.TierListItem) []TierRow {
+	rows := tierRowMetadata(config)
+	itemsByTier := map[string][]TierItem{}
+	sorted := append([]models.TierListItem{}, items...)
+	slices.SortFunc(sorted, func(a, b models.TierListItem) int {
+		if a.TierKey == b.TierKey {
+			return a.TierPosition - b.TierPosition
+		}
+		return a.ListPosition - b.ListPosition
+	})
+
+	for _, item := range sorted {
+		view := TierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: PublicURLPtr(item.ImageURL)}
+		itemsByTier[item.TierKey] = append(itemsByTier[item.TierKey], view)
+	}
+
+	out := make([]TierRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, TierRow{
+			ID:    row.ID,
+			Label: row.Label,
+			Items: append([]TierItem{}, itemsByTier[row.ID]...),
+		})
+	}
+	return out
+}
+
+func tierRowMetadata(config string) []TierRow {
+	var rows []TierRow
+	if strings.TrimSpace(config) != "" && json.Unmarshal([]byte(config), &rows) == nil {
+		return normalizeTierRows(rows)
+	}
+	return normalizeTierRows([]TierRow{
+		{ID: "S", Label: "S"},
+		{ID: "A", Label: "A"},
+		{ID: "B", Label: "B"},
+		{ID: "C", Label: "C"},
+		{ID: "D", Label: "D"},
+	})
+}
+
+func normalizeTierRows(rows []TierRow) []TierRow {
+	out := make([]TierRow, 0, len(rows))
+	for index, row := range rows {
+		id := strings.TrimSpace(row.ID)
+		if id == "" {
+			id = fmt.Sprintf("tier-%d", index+1)
+		}
+		label := strings.TrimSpace(row.Label)
+		if label == "" {
+			label = id
+		}
+		if strings.TrimSpace(label) == "" {
+			label = "Tier"
+		}
+		out = append(out, TierRow{ID: id, Label: label, Items: append([]TierItem{}, row.Items...)})
+	}
+	return out
 }
 
 func BuildTierData(items []models.TierListItem) TierData {

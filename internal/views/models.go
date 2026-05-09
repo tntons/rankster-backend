@@ -27,6 +27,12 @@ type TierData struct {
 	D []TierItem `json:"D"`
 }
 
+type TierRow struct {
+	ID    string     `json:"id"`
+	Label string     `json:"label"`
+	Items []TierItem `json:"items"`
+}
+
 type Comment struct {
 	ID        string `json:"id"`
 	User      User   `json:"user"`
@@ -48,6 +54,7 @@ type RankPost struct {
 	Category         string     `json:"category"`
 	CoverImage       string     `json:"coverImage"`
 	Tiers            TierData   `json:"tiers"`
+	TierRows         []TierRow  `json:"tierRows"`
 	AllItems         []TierItem `json:"allItems"`
 	Description      string     `json:"description"`
 	Tags             []string   `json:"tags"`
@@ -209,6 +216,7 @@ type CreateRankRequest struct {
 	Description  string     `json:"description"`
 	Tags         []string   `json:"tags"`
 	Tiers        TierData   `json:"tiers"`
+	TierRows     []TierRow  `json:"tierRows"`
 	AllItems     []TierItem `json:"allItems"`
 	IsPublic     *bool      `json:"isPublic"`
 	SourcePostID string     `json:"sourcePostId"`

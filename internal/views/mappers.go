@@ -2,6 +2,8 @@ package views
 
 import (
 	"fmt"
+	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -26,7 +28,7 @@ func BuildUser(user models.User) User {
 
 	avatar := AssetURL("avatars", profile.Username)
 	if profile.AvatarURL != nil && strings.TrimSpace(*profile.AvatarURL) != "" {
-		avatar = *profile.AvatarURL
+		avatar = PublicURL(*profile.AvatarURL)
 	}
 
 	return User{
@@ -99,7 +101,7 @@ func BuildTierData(items []models.TierListItem) TierData {
 	})
 
 	for _, item := range sorted {
-		view := TierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: item.ImageURL}
+		view := TierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: PublicURLPtr(item.ImageURL)}
 		switch item.TierKey {
 		case "S":
 			data.S = append(data.S, view)
@@ -124,7 +126,7 @@ func BuildAllItems(items []models.TierListItem) []TierItem {
 
 	out := make([]TierItem, 0, len(sorted))
 	for _, item := range sorted {
-		out = append(out, TierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: item.ImageURL})
+		out = append(out, TierItem{ID: item.ExternalID, Name: item.Name, Emoji: item.Emoji, ImageURL: PublicURLPtr(item.ImageURL)})
 	}
 	return out
 }
@@ -225,13 +227,48 @@ func ChatTimestamp(t time.Time) string {
 
 func AssetOrFallback(asset *models.Asset, kind, slug string) string {
 	if asset != nil && strings.TrimSpace(asset.URL) != "" {
-		return asset.URL
+		return PublicURL(asset.URL)
 	}
 	return AssetURL(kind, slug)
 }
 
 func AssetURL(kind string, slug string) string {
-	return fmt.Sprintf("http://localhost:8000/assets/%s/%s.svg", kind, safeSlug(slug))
+	return fmt.Sprintf("%s/assets/%s/%s.svg", publicBaseURL(), kind, safeSlug(slug))
+}
+
+func PublicURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" {
+		return value
+	}
+	if parsed.Host != "localhost:8000" && parsed.Host != "127.0.0.1:8000" {
+		return value
+	}
+	if !strings.HasPrefix(parsed.Path, "/assets/") && !strings.HasPrefix(parsed.Path, "/uploads/") {
+		return value
+	}
+	return publicBaseURL() + parsed.EscapedPath()
+}
+
+func PublicURLPtr(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	nextValue := PublicURL(*value)
+	return &nextValue
+}
+
+func publicBaseURL() string {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
+	if baseURL == "" {
+		return "http://localhost:8000"
+	}
+	return baseURL
 }
 
 func MetricLikeCount(metrics *models.PostMetrics) int {

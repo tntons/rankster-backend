@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -150,5 +151,13 @@ func intFromString(value string, fallback int) int {
 }
 
 func rankCoverURL(title string) string {
-	return fmt.Sprintf("http://localhost:8000/assets/ranks/%s.svg", slugify(title))
+	return fmt.Sprintf("%s/assets/ranks/%s.svg", publicBaseURL(), slugify(title))
+}
+
+func publicBaseURL() string {
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
+	if baseURL == "" {
+		return "http://localhost:8000"
+	}
+	return baseURL
 }

@@ -54,8 +54,11 @@ func Seed(database *gorm.DB, publicBaseURL string) error {
 		if err := seedBaseDemo(database, publicBaseURL); err != nil {
 			return err
 		}
+		return seedFrontendDemo(database, publicBaseURL)
 	}
-	return seedFrontendDemo(database, publicBaseURL)
+	// Do not re-apply the frontend demo seed on every boot. It overwrites
+	// editable profile fields such as avatar_url after production deploys.
+	return nil
 }
 
 func EnsureDatabase(database *gorm.DB, publicBaseURL string) error {

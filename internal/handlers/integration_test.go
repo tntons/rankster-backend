@@ -350,6 +350,7 @@ func TestCreatedRankIsSearchableAndCategoryFilterable(t *testing.T) {
 
 	assertSearchTopic("Moonbase")
 	assertSearchTopic("orbital-pasta")
+	assertSearchTopic("#orbital-pasta")
 	assertSearchTopic("space-dining")
 
 	req = httptest.NewRequest(http.MethodGet, "/search/categories?q=space-dining", nil)

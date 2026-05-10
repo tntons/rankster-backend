@@ -12,7 +12,7 @@ func (h *Handler) SearchOverview(c *gin.Context) {
 		return
 	}
 
-	q := strings.TrimSpace(strings.ToLower(c.Query("q")))
+	q := normalizeSearchQuery(c.Query("q"))
 	response, err := h.searchService.Search(q)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to search"})
@@ -26,7 +26,7 @@ func (h *Handler) GetTrendingTopics(c *gin.Context) {
 		return
 	}
 
-	q := strings.TrimSpace(strings.ToLower(c.Query("q")))
+	q := normalizeSearchQuery(c.Query("q"))
 	items, err := h.searchService.TrendingTopicsFiltered(q, 100)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load topics"})
@@ -40,11 +40,17 @@ func (h *Handler) GetCategories(c *gin.Context) {
 		return
 	}
 
-	q := strings.TrimSpace(strings.ToLower(c.Query("q")))
+	q := normalizeSearchQuery(c.Query("q"))
 	items, err := h.searchService.Categories(q)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load categories"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func normalizeSearchQuery(query string) string {
+	q := strings.TrimSpace(strings.ToLower(query))
+	q = strings.TrimLeft(q, "#")
+	return strings.TrimSpace(q)
 }

@@ -53,6 +53,23 @@ type frontendDemoPost struct {
 	Comments         []frontendDemoComment
 }
 
+var frontendDemoCoverURLs = map[string]string{
+	"anime-winter-2025":                 "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411668/rankster/covers/demo/anime-winter-2025.jpg",
+	"pizza-toppings":                    "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411682/rankster/covers/demo/pizza-toppings.jpg",
+	"nba-players-2025":                  "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411698/rankster/covers/demo/nba-players-2025.jpg",
+	"albums-on-repeat-2024":             "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411710/rankster/covers/demo/albums-on-repeat-2024.jpg",
+	"hiphop-albums-2024":                "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411721/rankster/covers/demo/hiphop-albums-2024.jpg",
+	"games-2024":                        "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411732/rankster/covers/demo/games-2024.jpg",
+	"games-i-couldnt-stop-playing-2024": "https://res.cloudinary.com/dolxm6wey/image/upload/v1778411742/rankster/covers/demo/games-i-couldnt-stop-playing-2024.jpg",
+}
+
+func frontendDemoCoverURL(baseURL string, coverSlug string) string {
+	if coverURL := strings.TrimSpace(frontendDemoCoverURLs[coverSlug]); coverURL != "" {
+		return coverURL
+	}
+	return fmt.Sprintf("%s/assets/ranks/%s.svg", baseURL, coverSlug)
+}
+
 type frontendDemoMessage struct {
 	OwnerUsername string
 	PeerUsername  string
@@ -713,14 +730,31 @@ func upsertFrontendCategory(tx *gorm.DB, now time.Time, seed frontendDemoCategor
 
 func upsertFrontendPost(tx *gorm.DB, baseURL string, now time.Time, seed frontendDemoPost, userIDs map[string]string, categoryIDs map[string]string) error {
 	var existing models.TierListPost
-	if err := tx.Where("title = ?", seed.Title).First(&existing).Error; err != nil && err != gorm.ErrRecordNotFound {
+	err := tx.Model(&models.TierListPost{}).
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Joins("JOIN user_profiles ON user_profiles.user_id = posts.creator_id").
+		Where("user_profiles.username = ? AND tier_list_posts.title = ?", seed.Username, seed.Title).
+		First(&existing).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
 		return err
-	} else if err == nil {
-		return nil
+	}
+
+	coverURL := frontendDemoCoverURL(baseURL, seed.CoverSlug)
+	if err == nil {
+		coverAssetID, err := ensureAsset(tx, coverURL, now)
+		if err != nil {
+			return err
+		}
+		if existing.CoverAssetID != nil && *existing.CoverAssetID == coverAssetID {
+			return nil
+		}
+		return tx.Model(&models.TierListPost{}).
+			Where("post_id = ?", existing.PostID).
+			Updates(map[string]any{"cover_asset_id": coverAssetID, "updated_at": now}).Error
 	}
 
 	createdAt := now.Add(-seed.Age)
-	coverAssetID, err := ensureAsset(tx, fmt.Sprintf("%s/assets/ranks/%s.svg", baseURL, seed.CoverSlug), createdAt)
+	coverAssetID, err := ensureAsset(tx, coverURL, createdAt)
 	if err != nil {
 		return err
 	}
@@ -822,7 +856,7 @@ func upsertTrendingTopic(tx *gorm.DB, baseURL string, now time.Time, seed fronte
 		return err
 	}
 
-	coverAssetID, err := ensureAsset(tx, fmt.Sprintf("%s/assets/ranks/%s.svg", baseURL, seed.CoverSlug), now)
+	coverAssetID, err := ensureAsset(tx, frontendDemoCoverURL(baseURL, seed.CoverSlug), now)
 	if err != nil {
 		return err
 	}

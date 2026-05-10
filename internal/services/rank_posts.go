@@ -185,7 +185,7 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 			CoverAssetID:     &asset.ID,
 			Tags:             pq.StringArray(tags),
 			TierConfig:       tierConfig,
-			ParticipantCount: max(1, len(allItems)),
+			ParticipantCount: 1,
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}

@@ -160,6 +160,11 @@ type TierListPost struct {
 	Items      []TierListItem `gorm:"foreignKey:TierListPostID;references:PostID"`
 }
 
+type DataMigration struct {
+	ID        string `gorm:"primaryKey"`
+	AppliedAt time.Time
+}
+
 type TierListItem struct {
 	ID             string `gorm:"type:uuid;primaryKey"`
 	TierListPostID string `gorm:"type:uuid;index"`

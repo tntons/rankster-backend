@@ -17,6 +17,7 @@ func AutoMigrate(database *gorm.DB) error {
 		&models.UserAuth{},
 		&models.UserProfile{},
 		&models.UserStats{},
+		&models.DataMigration{},
 		&models.Subscription{},
 		&models.Follow{},
 		&models.Category{},
@@ -73,10 +74,70 @@ func EnsureDatabase(database *gorm.DB, publicBaseURL string) error {
 	if err := Seed(database, publicBaseURL); err != nil {
 		return err
 	}
+	if err := runDataMigrations(database); err != nil {
+		return err
+	}
 	if err := ensureLocalDevAssetURLs(database, publicBaseURL); err != nil {
 		return err
 	}
 	return ensureFrontendDemoCoverAssets(database)
+}
+
+const fixRankParticipantCountsMigrationID = "20260510_fix_rank_participant_counts_from_item_count"
+
+func runDataMigrations(database *gorm.DB) error {
+	return database.Transaction(func(tx *gorm.DB) error {
+		var existing models.DataMigration
+		err := tx.Where("id = ?", fixRankParticipantCountsMigrationID).First(&existing).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := fixRankParticipantCountsFromItemCounts(tx); err != nil {
+			return err
+		}
+		return tx.Create(&models.DataMigration{
+			ID:        fixRankParticipantCountsMigrationID,
+			AppliedAt: time.Now(),
+		}).Error
+	})
+}
+
+func fixRankParticipantCountsFromItemCounts(tx *gorm.DB) error {
+	var lists []models.TierListPost
+	if err := tx.Preload("Items").
+		Where("participant_count > ? AND participant_count <= ?", 1, 50).
+		Find(&lists).Error; err != nil {
+		return err
+	}
+
+	now := time.Now()
+	for _, list := range lists {
+		itemCount := len(list.Items)
+		if itemCount == 0 || list.ParticipantCount < itemCount {
+			continue
+		}
+
+		// Older create logic accidentally initialized participant_count from the
+		// item count. Preserve any later "rank this" increments by subtracting
+		// the item-count seed and keeping the creator as the first participant.
+		correctedCount := list.ParticipantCount - itemCount + 1
+		if correctedCount < 1 || correctedCount == list.ParticipantCount {
+			continue
+		}
+
+		if err := tx.Model(&models.TierListPost{}).
+			Where("post_id = ?", list.PostID).
+			Updates(map[string]any{
+				"participant_count": correctedCount,
+				"updated_at":        now,
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureLocalDevAssetURLs(database *gorm.DB, publicBaseURL string) error {

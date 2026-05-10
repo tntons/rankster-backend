@@ -31,6 +31,8 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 	router.PATCH("/profile/me", apiHandler.UpdateProfileMe)
 	router.POST("/profile/me/pinned/:postId", apiHandler.PinProfilePost)
 	router.DELETE("/profile/me/pinned/:postId", apiHandler.UnpinProfilePost)
+	router.GET("/profile/:username/followers", apiHandler.GetProfileFollowers)
+	router.GET("/profile/:username/following", apiHandler.GetProfileFollowing)
 	router.GET("/profile/:username", apiHandler.GetProfileByUsername)
 	router.POST("/profile/:username/follow", apiHandler.FollowProfileUser)
 	router.DELETE("/profile/:username/follow", apiHandler.UnfollowProfileUser)

@@ -87,6 +87,54 @@ func (h *Handler) GetProfileByUsername(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+func (h *Handler) GetProfileFollowers(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	userRecord, err := h.lookupUserByUsername(c.Param("username"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "USER_NOT_FOUND", "message": "user not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load followers"})
+		return
+	}
+
+	response, err := h.profileService.FollowersForUser(userRecord.ID, 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load followers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) GetProfileFollowing(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	userRecord, err := h.lookupUserByUsername(c.Param("username"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "USER_NOT_FOUND", "message": "user not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load following"})
+		return
+	}
+
+	response, err := h.profileService.FollowingForUser(userRecord.ID, 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load following"})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *Handler) FollowProfileUser(c *gin.Context) {
 	authUser, ok := h.requireUser(c)
 	if !ok {

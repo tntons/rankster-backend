@@ -1217,6 +1217,63 @@ func TestFollowAndUnfollowProfileUser(t *testing.T) {
 	}
 }
 
+func TestProfileFollowersAndFollowingLists(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+
+	req := httptest.NewRequest(http.MethodPost, "/profile/tierqueen/follow", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("follow status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/profile/tierqueen/followers", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("followers status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var followers profileFollowListResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &followers); err != nil {
+		t.Fatalf("decode followers: %v", err)
+	}
+	if !followListContainsUsername(followers, "me") {
+		t.Fatalf("followers did not include me: %+v", followers.Items)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/profile/me/following", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("following status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var following profileFollowListResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &following); err != nil {
+		t.Fatalf("decode following: %v", err)
+	}
+	if !followListContainsUsername(following, "tierqueen") {
+		t.Fatalf("following did not include tierqueen: %+v", following.Items)
+	}
+}
+
+func followListContainsUsername(response profileFollowListResponse, username string) bool {
+	for _, user := range response.Items {
+		if user.Username == username {
+			return true
+		}
+	}
+	return false
+}
+
 func TestNotificationsListAndMarkRead(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -60,6 +60,7 @@ type createdMessageView = views.CreatedMessage
 type trendingTopicView = views.TrendingTopic
 type categoryView = views.Category
 type profileResponse = views.ProfileResponse
+type profileFollowListResponse = views.ProfileFollowListResponse
 type profileStatsView = views.ProfileStats
 type profileCategoryView = views.ProfileCategory
 type searchResponse = views.SearchResponse

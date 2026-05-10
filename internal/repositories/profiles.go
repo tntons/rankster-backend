@@ -59,6 +59,50 @@ func (r *ProfileRepository) FollowState(followerID, followingID string) (bool, e
 	return count > 0, nil
 }
 
+func (r *ProfileRepository) Followers(userID string, limit int) ([]models.User, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var total int64
+	if err := r.db.Model(&models.Follow{}).Where("following_id = ?", userID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var users []models.User
+	err := r.db.Model(&models.User{}).
+		Preload("Profile").
+		Preload("Stats").
+		Joins("JOIN follows ON follows.follower_id = users.id").
+		Where("follows.following_id = ?", userID).
+		Order("follows.created_at DESC").
+		Limit(limit).
+		Find(&users).Error
+	return users, int(total), err
+}
+
+func (r *ProfileRepository) Following(userID string, limit int) ([]models.User, int, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var total int64
+	if err := r.db.Model(&models.Follow{}).Where("follower_id = ?", userID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var users []models.User
+	err := r.db.Model(&models.User{}).
+		Preload("Profile").
+		Preload("Stats").
+		Joins("JOIN follows ON follows.following_id = users.id").
+		Where("follows.follower_id = ?", userID).
+		Order("follows.created_at DESC").
+		Limit(limit).
+		Find(&users).Error
+	return users, int(total), err
+}
+
 func (r *ProfileRepository) UpdateCurrentProfile(userID string, displayName string, bio string, avatar string) error {
 	updates := map[string]any{
 		"display_name": displayName,

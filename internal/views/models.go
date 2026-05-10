@@ -167,6 +167,11 @@ type ProfileResponse struct {
 	IsFollowing        bool              `json:"isFollowing"`
 }
 
+type ProfileFollowListResponse struct {
+	Items []User `json:"items"`
+	Total int    `json:"total"`
+}
+
 type ProfileStats struct {
 	TotalRankings int `json:"totalRankings"`
 	Followers     int `json:"followers"`

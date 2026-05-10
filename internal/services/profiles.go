@@ -131,6 +131,34 @@ func (s *ProfileService) FollowState(followerID, followingID string) (bool, erro
 	return s.profiles.FollowState(followerID, followingID)
 }
 
+func (s *ProfileService) FollowersForUser(userID string, limit int) (views.ProfileFollowListResponse, error) {
+	users, total, err := s.profiles.Followers(userID, limit)
+	if err != nil {
+		return views.ProfileFollowListResponse{}, err
+	}
+
+	items := make([]views.User, 0, len(users))
+	for _, user := range users {
+		items = append(items, views.BuildUser(user))
+	}
+
+	return views.ProfileFollowListResponse{Items: items, Total: total}, nil
+}
+
+func (s *ProfileService) FollowingForUser(userID string, limit int) (views.ProfileFollowListResponse, error) {
+	users, total, err := s.profiles.Following(userID, limit)
+	if err != nil {
+		return views.ProfileFollowListResponse{}, err
+	}
+
+	items := make([]views.User, 0, len(users))
+	for _, user := range users {
+		items = append(items, views.BuildUser(user))
+	}
+
+	return views.ProfileFollowListResponse{Items: items, Total: total}, nil
+}
+
 func (s *ProfileService) UpdateCurrentProfile(userID string, displayName string, bio string, avatar string) error {
 	return s.profiles.UpdateCurrentProfile(userID, displayName, bio, avatar)
 }

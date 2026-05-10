@@ -96,6 +96,17 @@ func (r *TierListRepository) SourcePostIDForTopic(topicID string) (*string, erro
 	return topic.SourcePostID, nil
 }
 
+func (r *TierListRepository) ByTopicID(topicID string) ([]models.TierListPost, error) {
+	var lists []models.TierListPost
+	err := preloadTierList(r.db).
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Where("posts.visibility = ?", "PUBLIC").
+		Where("COALESCE(tier_list_posts.topic_id, tier_list_posts.post_id) = ?", topicID).
+		Order("tier_list_posts.created_at desc").
+		Find(&lists).Error
+	return lists, err
+}
+
 func (r *TierListRepository) ByCreator(creatorID string) ([]models.TierListPost, error) {
 	var lists []models.TierListPost
 	err := preloadTierList(r.db).

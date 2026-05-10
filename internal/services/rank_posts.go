@@ -48,6 +48,83 @@ func NewRankPostService(
 	}
 }
 
+func topicIDForList(list models.TierListPost) string {
+	topicID := ""
+	if list.TopicID != nil {
+		topicID = strings.TrimSpace(*list.TopicID)
+	}
+	if topicID == "" {
+		return list.PostID
+	}
+	return topicID
+}
+
+func (s *RankPostService) participantCountsByTopic(lists []models.TierListPost) (map[string]int, error) {
+	counts := make(map[string]int, len(lists))
+	if len(lists) == 0 {
+		return counts, nil
+	}
+
+	topicIDs := make([]string, 0, len(lists))
+	seen := map[string]bool{}
+	for _, list := range lists {
+		topicID := topicIDForList(list)
+		counts[topicID] = 1
+		if !seen[topicID] {
+			seen[topicID] = true
+			topicIDs = append(topicIDs, topicID)
+		}
+	}
+
+	var rows []struct {
+		TopicID string
+		Count   int64
+	}
+	err := s.db.Table("tier_list_posts").
+		Select("COALESCE(tier_list_posts.topic_id, tier_list_posts.post_id) AS topic_id, COUNT(*) AS count").
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Where("posts.visibility = ?", "PUBLIC").
+		Where("COALESCE(tier_list_posts.topic_id, tier_list_posts.post_id) IN ?", topicIDs).
+		Group("COALESCE(tier_list_posts.topic_id, tier_list_posts.post_id)").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		if row.Count > 0 {
+			counts[row.TopicID] = int(row.Count)
+		}
+	}
+	return counts, nil
+}
+
+func refreshParticipantCountForTopic(tx *gorm.DB, topicID string, now time.Time) error {
+	topicID = strings.TrimSpace(topicID)
+	if topicID == "" {
+		return nil
+	}
+
+	var count int64
+	if err := tx.Model(&models.TierListPost{}).
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Where("posts.visibility = ?", "PUBLIC").
+		Where("COALESCE(tier_list_posts.topic_id, tier_list_posts.post_id) = ?", topicID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count < 1 {
+		count = 1
+	}
+
+	return tx.Model(&models.TierListPost{}).
+		Where("COALESCE(topic_id, post_id) = ?", topicID).
+		Updates(map[string]any{
+			"participant_count": count,
+			"updated_at":        now,
+		}).Error
+}
+
 func (s *RankPostService) HydrateTierLists(lists []models.TierListPost, authUser *views.User) ([]views.RankPost, error) {
 	postIDs := make([]string, 0, len(lists))
 	for _, list := range lists {
@@ -68,10 +145,15 @@ func (s *RankPostService) HydrateTierLists(lists []models.TierListPost, authUser
 		return nil, err
 	}
 
+	participantCounts, err := s.participantCountsByTopic(lists)
+	if err != nil {
+		return nil, err
+	}
+
 	items := make([]views.RankPost, 0, len(lists))
 	for _, list := range lists {
 		canEdit := authUser != nil && list.Post.CreatorID == authUser.ID
-		items = append(items, views.BuildRankPost(list, commentsByPost[list.PostID], likedByPost[list.PostID], canEdit))
+		items = append(items, views.BuildRankPost(list, commentsByPost[list.PostID], likedByPost[list.PostID], canEdit, participantCounts[topicIDForList(list)]))
 	}
 	return items, nil
 }
@@ -117,14 +199,60 @@ func (s *RankPostService) LikedRankingsForUser(userID string, authUser *views.Us
 	return s.HydrateTierLists(lists, authUser)
 }
 
+func (s *RankPostService) TopicDetail(topicOrPostID string, authUser *views.User) (views.TopicDetailResponse, error) {
+	list, err := s.tierLists.FindByPostID(topicOrPostID)
+	topicID := strings.TrimSpace(topicOrPostID)
+	if err == nil {
+		topicID = topicIDForList(list)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return views.TopicDetailResponse{}, err
+	}
+
+	lists, err := s.tierLists.ByTopicID(topicID)
+	if err != nil {
+		return views.TopicDetailResponse{}, err
+	}
+	if len(lists) == 0 && list.PostID != "" {
+		lists = []models.TierListPost{list}
+	}
+	if len(lists) == 0 {
+		return views.TopicDetailResponse{}, gorm.ErrRecordNotFound
+	}
+
+	posts, err := s.HydrateTierLists(lists, authUser)
+	if err != nil {
+		return views.TopicDetailResponse{}, err
+	}
+
+	representative := lists[0]
+	for _, candidate := range lists {
+		if candidate.PostID == topicID {
+			representative = candidate
+			break
+		}
+	}
+
+	participantCount := len(lists)
+	if len(posts) > 0 && posts[0].ParticipantCount > participantCount {
+		participantCount = posts[0].ParticipantCount
+	}
+
+	return views.TopicDetailResponse{
+		Topic: views.BuildRankPostTopicWithCount(representative, topicID, participantCount),
+		Posts: posts,
+	}, nil
+}
+
 func (s *RankPostService) CreateRank(user views.User, body views.CreateRankRequest) (views.RankPost, error) {
 	now := time.Now()
 	postID := ""
 	sourcePostID := strings.TrimSpace(body.SourcePostID)
+	topicID := ""
+	var parentPostID *string
 
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var source models.TierListPost
 		if sourcePostID != "" {
-			var source models.TierListPost
 			if err := tx.Where("post_id = ?", sourcePostID).First(&source).Error; err != nil {
 				return err
 			}
@@ -141,6 +269,21 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 		}
 
 		postID = generateUUID()
+		if sourcePostID != "" {
+			topicID = topicIDForList(source)
+			parentID := source.PostID
+			parentPostID = &parentID
+			if source.TopicID == nil || strings.TrimSpace(*source.TopicID) == "" {
+				if err := tx.Model(&models.TierListPost{}).
+					Where("post_id = ?", source.PostID).
+					Update("topic_id", topicID).Error; err != nil {
+					return err
+				}
+			}
+		} else {
+			topicID = postID
+		}
+
 		visibility := "PUBLIC"
 		if body.IsPublic != nil && !*body.IsPublic {
 			visibility = "PRIVATE"
@@ -173,6 +316,8 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 
 		tierPost := models.TierListPost{
 			PostID:           postID,
+			TopicID:          &topicID,
+			ParentPostID:     parentPostID,
 			Title:            body.Title,
 			Description:      stringPtr(body.Description),
 			CoverAssetID:     &asset.ID,
@@ -201,17 +346,11 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 		}
 
 		if sourcePostID != "" {
-			if err := tx.Model(&models.TierListPost{}).
-				Where("post_id = ?", sourcePostID).
-				Update("participant_count", gorm.Expr("participant_count + ?", 1)).Error; err != nil {
+			if err := refreshParticipantCountForTopic(tx, topicID, now); err != nil {
 				return err
 			}
-
-			if err := tx.Model(&models.TrendingTopic{}).
-				Where("source_post_id = ?", sourcePostID).
-				Update("participant_count", gorm.Expr("participant_count + ?", 1)).Error; err != nil {
-				return err
-			}
+		} else if err := refreshParticipantCountForTopic(tx, topicID, now); err != nil {
+			return err
 		}
 
 		return nil
@@ -283,6 +422,7 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 			Where("post_id = ?", postID).
 			Updates(map[string]any{
 				"title":          body.Title,
+				"topic_id":       topicIDForList(list),
 				"description":    stringPtr(body.Description),
 				"cover_asset_id": &asset.ID,
 				"tags":           pq.StringArray(tags),
@@ -294,14 +434,17 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 
 		allItems := allItemsForRequest(body)
 		if len(allItems) == 0 {
-			return nil
+			return refreshParticipantCountForTopic(tx, topicIDForList(list), now)
 		}
 
 		if err := tx.Where("tier_list_post_id = ?", postID).Delete(&models.TierListItem{}).Error; err != nil {
 			return err
 		}
 
-		return createTierListItems(tx, postID, body.Tiers, tierRows, allItems, now)
+		if err := createTierListItems(tx, postID, body.Tiers, tierRows, allItems, now); err != nil {
+			return err
+		}
+		return refreshParticipantCountForTopic(tx, topicIDForList(list), now)
 	})
 	if err != nil {
 		return views.RankPost{}, err
@@ -322,6 +465,7 @@ func (s *RankPostService) DeleteRankPost(userID string, postID string) error {
 		if list.Post.CreatorID != userID {
 			return ErrForbidden
 		}
+		topicID := topicIDForList(list)
 
 		commentIDQuery := tx.Model(&models.Comment{}).Select("id").Where("post_id = ?", postID)
 		if err := tx.Where("comment_id IN (?)", commentIDQuery).Delete(&models.CommentLike{}).Error; err != nil {
@@ -357,6 +501,9 @@ func (s *RankPostService) DeleteRankPost(userID string, postID string) error {
 			return err
 		}
 		if err := tx.Delete(&models.Post{ID: postID}).Error; err != nil {
+			return err
+		}
+		if err := refreshParticipantCountForTopic(tx, topicID, time.Now()); err != nil {
 			return err
 		}
 		return tx.Model(&models.UserStats{}).Where("user_id = ?", userID).

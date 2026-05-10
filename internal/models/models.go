@@ -145,7 +145,9 @@ type RankPost struct {
 }
 
 type TierListPost struct {
-	PostID           string `gorm:"type:uuid;primaryKey"`
+	PostID           string  `gorm:"type:uuid;primaryKey"`
+	TopicID          *string `gorm:"type:uuid;index"`
+	ParentPostID     *string `gorm:"type:uuid;index"`
 	Title            string
 	Description      *string
 	CoverAssetID     *string        `gorm:"type:uuid;index"`

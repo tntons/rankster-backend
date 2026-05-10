@@ -83,26 +83,46 @@ func EnsureDatabase(database *gorm.DB, publicBaseURL string) error {
 	return ensureFrontendDemoCoverAssets(database)
 }
 
-const fixRankParticipantCountsMigrationID = "20260510_fix_rank_participant_counts_from_item_count"
+const (
+	fixRankParticipantCountsMigrationID = "20260510_fix_rank_participant_counts_from_item_count"
+	backfillRankTopicsMigrationID       = "20260510_backfill_rank_topics"
+)
 
 func runDataMigrations(database *gorm.DB) error {
 	return database.Transaction(func(tx *gorm.DB) error {
-		var existing models.DataMigration
-		err := tx.Where("id = ?", fixRankParticipantCountsMigrationID).First(&existing).Error
-		if err == nil {
-			return nil
+		migrations := []struct {
+			id  string
+			run func(*gorm.DB) error
+		}{
+			{fixRankParticipantCountsMigrationID, fixRankParticipantCountsFromItemCounts},
+			{backfillRankTopicsMigrationID, backfillRankTopics},
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
+
+		for _, migration := range migrations {
+			if err := runDataMigration(tx, migration.id, migration.run); err != nil {
+				return err
+			}
 		}
-		if err := fixRankParticipantCountsFromItemCounts(tx); err != nil {
-			return err
-		}
-		return tx.Create(&models.DataMigration{
-			ID:        fixRankParticipantCountsMigrationID,
-			AppliedAt: time.Now(),
-		}).Error
+		return nil
 	})
+}
+
+func runDataMigration(tx *gorm.DB, id string, run func(*gorm.DB) error) error {
+	var existing models.DataMigration
+	err := tx.Where("id = ?", id).First(&existing).Error
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if err := run(tx); err != nil {
+		return err
+	}
+	return tx.Create(&models.DataMigration{
+		ID:        id,
+		AppliedAt: time.Now(),
+	}).Error
 }
 
 func fixRankParticipantCountsFromItemCounts(tx *gorm.DB) error {
@@ -138,6 +158,74 @@ func fixRankParticipantCountsFromItemCounts(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func backfillRankTopics(tx *gorm.DB) error {
+	var lists []models.TierListPost
+	if err := tx.
+		Preload("Post").
+		Order("created_at asc").
+		Find(&lists).Error; err != nil {
+		return err
+	}
+
+	type topicKey struct {
+		title      string
+		categoryID string
+	}
+	groups := map[topicKey][]models.TierListPost{}
+	for _, list := range lists {
+		key := topicKey{
+			title:      normalizedTopicTitle(list.Title),
+			categoryID: list.Post.CategoryID,
+		}
+		groups[key] = append(groups[key], list)
+	}
+
+	now := time.Now()
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+
+		topicID := ""
+		for _, list := range group {
+			if list.TopicID != nil && strings.TrimSpace(*list.TopicID) != "" {
+				topicID = *list.TopicID
+				break
+			}
+		}
+		if topicID == "" {
+			topicID = group[0].PostID
+		}
+
+		publicCount := int64(0)
+		postIDs := make([]string, 0, len(group))
+		for _, list := range group {
+			postIDs = append(postIDs, list.PostID)
+			if list.Post.Visibility == "PUBLIC" {
+				publicCount++
+			}
+		}
+		if publicCount < 1 {
+			publicCount = 1
+		}
+
+		if err := tx.Model(&models.TierListPost{}).
+			Where("post_id IN ?", postIDs).
+			Updates(map[string]any{
+				"topic_id":          topicID,
+				"participant_count": publicCount,
+				"updated_at":        now,
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizedTopicTitle(title string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(title))), " ")
 }
 
 func ensureLocalDevAssetURLs(database *gorm.DB, publicBaseURL string) error {

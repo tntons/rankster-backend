@@ -54,6 +54,8 @@ type PostLikeResponse struct {
 
 type RankPost struct {
 	ID               string     `json:"id"`
+	TopicID          string     `json:"topicId"`
+	ParentPostID     *string    `json:"parentPostId,omitempty"`
 	User             User       `json:"user"`
 	Title            string     `json:"title"`
 	Category         string     `json:"category"`
@@ -195,6 +197,11 @@ type SearchResponse struct {
 type FeedResponse struct {
 	Items      []RankPost `json:"items"`
 	NextCursor any        `json:"nextCursor"`
+}
+
+type TopicDetailResponse struct {
+	Topic TrendingTopic `json:"topic"`
+	Posts []RankPost    `json:"posts"`
 }
 
 type AuthResponse struct {

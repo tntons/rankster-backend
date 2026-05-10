@@ -401,6 +401,150 @@ func TestCreatedRankIsSearchableAndCategoryFilterable(t *testing.T) {
 	t.Fatalf("created rank missing from category feed: %+v", feed.Items)
 }
 
+func TestRankRemixesAggregateUnderSourceTopic(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	type createdRank struct {
+		ID               string  `json:"id"`
+		TopicID          string  `json:"topicId"`
+		ParentPostID     *string `json:"parentPostId"`
+		ParticipantCount int     `json:"participantCount"`
+		AllItems         []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"allItems"`
+	}
+
+	createRank := func(username string, payload map[string]any) createdRank {
+		t.Helper()
+
+		token := mockLoginToken(t, router, username)
+		body, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("marshal rank payload: %v", err)
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/rank/create", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("create rank status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+		}
+
+		var created createdRank
+		if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+			t.Fatalf("decode created rank: %v", err)
+		}
+		return created
+	}
+
+	rankPayload := func(title string, tags []string, sourcePostID string, items []map[string]any) map[string]any {
+		payload := map[string]any{
+			"title":       title,
+			"category":    "food",
+			"description": "Community remix test",
+			"tags":        tags,
+			"allItems":    items,
+			"tierRows": []map[string]any{
+				{"id": "top", "label": "Top", "items": items[:1]},
+				{"id": "next", "label": "Next", "items": items[1:]},
+			},
+			"isPublic": true,
+		}
+		if sourcePostID != "" {
+			payload["sourcePostId"] = sourcePostID
+		}
+		return payload
+	}
+
+	rootItems := []map[string]any{
+		{"id": "chips", "name": "Chips"},
+		{"id": "soda", "name": "Soda"},
+	}
+	root := createRank("me", rankPayload("Collaborative Snack Ladder", []string{"snacks"}, "", rootItems))
+	if root.TopicID != root.ID || root.ParentPostID != nil || root.ParticipantCount != 1 {
+		t.Fatalf("unexpected root topic metadata: %+v", root)
+	}
+
+	remixItems := []map[string]any{
+		{"id": "chips", "name": "Chips"},
+		{"id": "soda", "name": "Soda"},
+		{"id": "pretzel", "name": "Pretzel"},
+	}
+	remix := createRank("animequeen", rankPayload("Animequeen Snack Remix", []string{"remix-special"}, root.ID, remixItems))
+	if remix.TopicID != root.ID || remix.ParentPostID == nil || *remix.ParentPostID != root.ID {
+		t.Fatalf("unexpected remix topic metadata: %+v", remix)
+	}
+
+	thirdItems := []map[string]any{
+		{"id": "chips", "name": "Chips"},
+		{"id": "soda", "name": "Soda"},
+		{"id": "pretzel", "name": "Pretzel"},
+		{"id": "cookie", "name": "Cookie"},
+	}
+	third := createRank("rankmaster99", rankPayload("Rankmaster Snack Remix", []string{"crunchy"}, remix.ID, thirdItems))
+	if third.TopicID != root.ID || third.ParentPostID == nil || *third.ParentPostID != remix.ID || third.ParticipantCount != 3 {
+		t.Fatalf("unexpected third remix metadata: %+v", third)
+	}
+	if len(third.AllItems) != len(thirdItems) {
+		t.Fatalf("expected third remix to preserve source plus added items, got %+v", third.AllItems)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/topics/"+remix.ID, nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("topic detail status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var topicDetail struct {
+		Topic struct {
+			ID               string `json:"id"`
+			ParticipantCount int    `json:"participantCount"`
+		} `json:"topic"`
+		Posts []struct {
+			ID               string `json:"id"`
+			TopicID          string `json:"topicId"`
+			ParticipantCount int    `json:"participantCount"`
+		} `json:"posts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &topicDetail); err != nil {
+		t.Fatalf("decode topic detail: %v", err)
+	}
+	if topicDetail.Topic.ID != root.ID || topicDetail.Topic.ParticipantCount != 3 || len(topicDetail.Posts) != 3 {
+		t.Fatalf("unexpected topic detail: %+v", topicDetail)
+	}
+	for _, post := range topicDetail.Posts {
+		if post.TopicID != root.ID || post.ParticipantCount != 3 {
+			t.Fatalf("topic post was not aggregated: %+v", post)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/search/overview?q=crunchy", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("search status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var searchResponse struct {
+		Topics []struct {
+			ID               string `json:"id"`
+			ParticipantCount int    `json:"participantCount"`
+		} `json:"topics"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &searchResponse); err != nil {
+		t.Fatalf("decode search response: %v", err)
+	}
+	if len(searchResponse.Topics) != 1 || searchResponse.Topics[0].ID != root.ID || searchResponse.Topics[0].ParticipantCount != 3 {
+		t.Fatalf("expected aggregated search topic with real participant count, got %+v", searchResponse.Topics)
+	}
+}
+
 func TestRankTierRowsPersistCustomLabelsAndDeletedRows(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

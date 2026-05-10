@@ -18,6 +18,7 @@ func RegisterRoutes(router *gin.Engine, db *gorm.DB, cfg config.Config) {
 
 	router.GET("/feed/main", apiHandler.GetMainFeed)
 	router.GET("/feed/post/:id", apiHandler.GetPost)
+	router.GET("/topics/:id", apiHandler.GetTopic)
 	router.PATCH("/feed/post/:id", apiHandler.UpdatePost)
 	router.DELETE("/feed/post/:id", apiHandler.DeletePost)
 	router.POST("/feed/post/:id/like", apiHandler.LikePost)

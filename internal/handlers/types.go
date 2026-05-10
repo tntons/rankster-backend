@@ -58,6 +58,7 @@ type notificationHub struct {
 
 type createdMessageView = views.CreatedMessage
 type trendingTopicView = views.TrendingTopic
+type topicDetailResponseView = views.TopicDetailResponse
 type categoryView = views.Category
 type profileResponse = views.ProfileResponse
 type profileFollowListResponse = views.ProfileFollowListResponse

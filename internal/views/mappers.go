@@ -66,12 +66,24 @@ func BuildNotification(notification models.Notification) Notification {
 	}
 }
 
-func BuildRankPost(list models.TierListPost, comments []Comment, isLiked bool, canEdit bool) RankPost {
+func BuildRankPost(list models.TierListPost, comments []Comment, isLiked bool, canEdit bool, participantCount int) RankPost {
 	if comments == nil {
 		comments = []Comment{}
 	}
+	topicID := ""
+	if list.TopicID != nil {
+		topicID = strings.TrimSpace(*list.TopicID)
+	}
+	if topicID == "" {
+		topicID = list.PostID
+	}
+	if participantCount < 1 {
+		participantCount = list.ParticipantCount
+	}
 	return RankPost{
 		ID:               list.PostID,
+		TopicID:          topicID,
+		ParentPostID:     list.ParentPostID,
 		User:             BuildUser(list.Post.Creator),
 		Title:            list.Title,
 		Category:         list.Post.Category.Slug,
@@ -87,7 +99,7 @@ func BuildRankPost(list models.TierListPost, comments []Comment, isLiked bool, c
 		Shares:           MetricShareCount(list.Post.Metrics),
 		CreatedAt:        RelativeTime(list.CreatedAt),
 		IsPublic:         list.Post.Visibility == "PUBLIC",
-		ParticipantCount: list.ParticipantCount,
+		ParticipantCount: participantCount,
 		CanEdit:          canEdit,
 	}
 }
@@ -243,14 +255,24 @@ func BuildTrendingTopic(topic models.TrendingTopic) TrendingTopic {
 }
 
 func BuildRankPostTopic(list models.TierListPost) TrendingTopic {
+	return BuildRankPostTopicWithCount(list, list.PostID, list.ParticipantCount)
+}
+
+func BuildRankPostTopicWithCount(list models.TierListPost, topicID string, participantCount int) TrendingTopic {
 	postID := list.PostID
+	if strings.TrimSpace(topicID) == "" {
+		topicID = list.PostID
+	}
+	if participantCount < 1 {
+		participantCount = 1
+	}
 	return TrendingTopic{
-		ID:               list.PostID,
+		ID:               topicID,
 		PostID:           &postID,
 		Title:            list.Title,
 		Category:         list.Post.Category.Slug,
 		CoverImage:       AssetOrFallback(list.CoverAsset, "ranks", slugify(list.Title)),
-		ParticipantCount: list.ParticipantCount,
+		ParticipantCount: participantCount,
 		Tags:             append([]string{}, list.Tags...),
 	}
 }

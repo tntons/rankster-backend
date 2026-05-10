@@ -29,6 +29,24 @@ func (h *Handler) GetPost(c *gin.Context) {
 	c.JSON(http.StatusOK, post)
 }
 
+func (h *Handler) GetTopic(c *gin.Context) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	authUser := h.optionalUser(c)
+	topic, err := h.topicByID(c.Param("id"), authUser)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "TOPIC_NOT_FOUND", "message": "topic not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load topic"})
+		return
+	}
+	c.JSON(http.StatusOK, topic)
+}
+
 func (h *Handler) UpdatePost(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
@@ -196,6 +214,10 @@ func (h *Handler) GetUserStats(c *gin.Context) {
 
 func (h *Handler) postByID(postID string, authUser *userView) (rankPostView, error) {
 	return h.rankPostService.GetPost(postID, authUser)
+}
+
+func (h *Handler) topicByID(topicID string, authUser *userView) (topicDetailResponseView, error) {
+	return h.rankPostService.TopicDetail(topicID, authUser)
 }
 
 func (h *Handler) createRank(user userView, body createRankRequest) (rankPostView, error) {

@@ -50,9 +50,53 @@ func (s *SearchService) TrendingTopicsFiltered(query string, limit int) ([]views
 		return nil, err
 	}
 
-	items := make([]views.TrendingTopic, 0, len(topics))
-	for _, topic := range topics {
-		items = append(items, views.BuildTrendingTopic(topic))
+	rankTopics, err := s.search.RankTopics(query, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]views.TrendingTopic, 0, len(topics)+len(rankTopics))
+	seenPostIDs := map[string]bool{}
+	seenTopicIDs := map[string]bool{}
+
+	appendRankTopics := func() {
+		for _, rankTopic := range rankTopics {
+			if seenPostIDs[rankTopic.PostID] || seenTopicIDs[rankTopic.PostID] {
+				continue
+			}
+			item := views.BuildRankPostTopic(rankTopic)
+			items = append(items, item)
+			seenPostIDs[rankTopic.PostID] = true
+			seenTopicIDs[item.ID] = true
+		}
+	}
+	appendTrendingTopics := func() {
+		for _, topic := range topics {
+			if topic.SourcePostID != nil && seenPostIDs[*topic.SourcePostID] {
+				continue
+			}
+			item := views.BuildTrendingTopic(topic)
+			if seenTopicIDs[item.ID] {
+				continue
+			}
+			items = append(items, item)
+			seenTopicIDs[item.ID] = true
+			if topic.SourcePostID != nil {
+				seenPostIDs[*topic.SourcePostID] = true
+			}
+		}
+	}
+
+	if query != "" {
+		appendRankTopics()
+		appendTrendingTopics()
+	} else {
+		appendTrendingTopics()
+		appendRankTopics()
+	}
+
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
 	}
 	return items, nil
 }

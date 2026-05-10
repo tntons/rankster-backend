@@ -242,6 +242,19 @@ func BuildTrendingTopic(topic models.TrendingTopic) TrendingTopic {
 	}
 }
 
+func BuildRankPostTopic(list models.TierListPost) TrendingTopic {
+	postID := list.PostID
+	return TrendingTopic{
+		ID:               list.PostID,
+		PostID:           &postID,
+		Title:            list.Title,
+		Category:         list.Post.Category.Slug,
+		CoverImage:       AssetOrFallback(list.CoverAsset, "ranks", slugify(list.Title)),
+		ParticipantCount: list.ParticipantCount,
+		Tags:             append([]string{}, list.Tags...),
+	}
+}
+
 func BuildCategory(category models.Category) Category {
 	emoji := ""
 	if category.Emoji != nil {

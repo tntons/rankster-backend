@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"rankster-backend/internal/models"
 	"rankster-backend/internal/repositories"
@@ -18,10 +19,11 @@ func NewFeedService(tierLists *repositories.TierListRepository, rankPosts *RankP
 	return &FeedService{tierLists: tierLists, rankPosts: rankPosts}
 }
 
-func (s *FeedService) MainFeed(scope string, offset, limit int, authUser *views.User) (views.FeedResponse, error) {
+func (s *FeedService) MainFeed(scope string, category string, offset, limit int, authUser *views.User) (views.FeedResponse, error) {
 	if limit < 1 {
 		limit = 20
 	}
+	category = strings.TrimSpace(strings.ToLower(category))
 
 	if scope == "following" && authUser == nil {
 		return views.FeedResponse{Items: []views.RankPost{}, NextCursor: nil}, nil
@@ -35,9 +37,9 @@ func (s *FeedService) MainFeed(scope string, offset, limit int, authUser *views.
 
 	switch scope {
 	case "following":
-		lists, hasMore, err = s.tierLists.FollowingFeed(authUser.ID, offset, limit)
+		lists, hasMore, err = s.tierLists.FollowingFeed(authUser.ID, offset, limit, category)
 	default:
-		lists, hasMore, err = s.tierLists.Feed(offset, limit)
+		lists, hasMore, err = s.tierLists.Feed(offset, limit, category)
 	}
 	if err != nil {
 		return views.FeedResponse{}, err

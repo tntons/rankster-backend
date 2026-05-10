@@ -26,7 +26,8 @@ func (h *Handler) GetTrendingTopics(c *gin.Context) {
 		return
 	}
 
-	items, err := h.searchService.TrendingTopics()
+	q := strings.TrimSpace(strings.ToLower(c.Query("q")))
+	items, err := h.searchService.TrendingTopicsFiltered(q, 100)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to load topics"})
 		return

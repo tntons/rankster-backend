@@ -16,14 +16,21 @@ func NewTierListRepository(db *gorm.DB) *TierListRepository {
 	return &TierListRepository{db: db}
 }
 
-func (r *TierListRepository) Feed(offset, limit int) ([]models.TierListPost, bool, error) {
+func (r *TierListRepository) Feed(offset, limit int, category string) ([]models.TierListPost, bool, error) {
 	if offset < 0 {
 		offset = 0
 	}
 
 	var lists []models.TierListPost
-	err := preloadTierList(r.db).
-		Order("created_at desc").
+	db := preloadTierList(r.db)
+	if category != "" && category != "all" {
+		db = db.
+			Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+			Joins("JOIN categories ON categories.id = posts.category_id").
+			Where("categories.slug = ? OR LOWER(categories.name) = ?", category, category)
+	}
+	err := db.
+		Order("tier_list_posts.created_at desc").
 		Offset(offset).
 		Limit(limit + 1).
 		Find(&lists).Error
@@ -38,16 +45,22 @@ func (r *TierListRepository) Feed(offset, limit int) ([]models.TierListPost, boo
 	return lists, hasMore, nil
 }
 
-func (r *TierListRepository) FollowingFeed(userID string, offset, limit int) ([]models.TierListPost, bool, error) {
+func (r *TierListRepository) FollowingFeed(userID string, offset, limit int, category string) ([]models.TierListPost, bool, error) {
 	if offset < 0 {
 		offset = 0
 	}
 
 	var lists []models.TierListPost
-	err := preloadTierList(r.db).
+	db := preloadTierList(r.db).
 		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
 		Joins("JOIN follows ON follows.following_id = posts.creator_id").
-		Where("follows.follower_id = ?", userID).
+		Where("follows.follower_id = ?", userID)
+	if category != "" && category != "all" {
+		db = db.
+			Joins("JOIN categories ON categories.id = posts.category_id").
+			Where("categories.slug = ? OR LOWER(categories.name) = ?", category, category)
+	}
+	err := db.
 		Order("tier_list_posts.created_at desc").
 		Offset(offset).
 		Limit(limit + 1).

@@ -274,6 +274,132 @@ func TestRankCreateCreatesNewDatabasePost(t *testing.T) {
 	}
 }
 
+func TestCreatedRankIsSearchableAndCategoryFilterable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	token := mockLoginToken(t, router, "me")
+	payload := map[string]any{
+		"title":       "Moonbase Snack Ladder",
+		"category":    "space-dining",
+		"description": "Production visibility regression coverage",
+		"tags":        []string{"orbital-pasta", "lunar-snacks"},
+		"tierRows": []map[string]any{
+			{"id": "S", "label": "S", "items": []map[string]any{{"id": "ramen", "name": "Zero-G Ramen"}}},
+			{"id": "A", "label": "A", "items": []map[string]any{{"id": "taco", "name": "Orbit Taco"}}},
+		},
+		"isPublic": true,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/rank/create", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var created struct {
+		ID       string   `json:"id"`
+		Title    string   `json:"title"`
+		Category string   `json:"category"`
+		Tags     []string `json:"tags"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.ID == "" || created.Title != "Moonbase Snack Ladder" || created.Category != "space-dining" {
+		t.Fatalf("unexpected created rank: %+v", created)
+	}
+
+	assertSearchTopic := func(query string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/search/overview?q="+url.QueryEscape(query), nil)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("search %q status = %d, want %d; body=%s", query, recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+
+		var response struct {
+			Topics []struct {
+				ID       string  `json:"id"`
+				PostID   *string `json:"postId"`
+				Title    string  `json:"title"`
+				Category string  `json:"category"`
+			} `json:"topics"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode search response: %v", err)
+		}
+		for _, topic := range response.Topics {
+			if topic.ID == created.ID && topic.PostID != nil && *topic.PostID == created.ID && topic.Category == "space-dining" {
+				return
+			}
+		}
+		t.Fatalf("created rank missing from search %q topics: %+v", query, response.Topics)
+	}
+
+	assertSearchTopic("Moonbase")
+	assertSearchTopic("orbital-pasta")
+	assertSearchTopic("space-dining")
+
+	req = httptest.NewRequest(http.MethodGet, "/search/categories?q=space-dining", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("categories status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var categories struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &categories); err != nil {
+		t.Fatalf("decode categories response: %v", err)
+	}
+	foundCategory := false
+	for _, category := range categories.Items {
+		if category.ID == "space-dining" {
+			foundCategory = true
+			break
+		}
+	}
+	if !foundCategory {
+		t.Fatalf("created rank category missing from categories: %+v", categories.Items)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/main?category=space-dining&limit=10", nil)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("category feed status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var feed struct {
+		Items []struct {
+			ID       string `json:"id"`
+			Category string `json:"category"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &feed); err != nil {
+		t.Fatalf("decode feed response: %v", err)
+	}
+	for _, item := range feed.Items {
+		if item.ID == created.ID && item.Category == "space-dining" {
+			return
+		}
+	}
+	t.Fatalf("created rank missing from category feed: %+v", feed.Items)
+}
+
 func TestRankTierRowsPersistCustomLabelsAndDeletedRows(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

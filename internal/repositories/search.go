@@ -39,6 +39,32 @@ func (r *SearchRepository) TrendingTopics(query string, limit int) ([]models.Tre
 	return topics, err
 }
 
+func (r *SearchRepository) RankTopics(query string, limit int) ([]models.TierListPost, error) {
+	var lists []models.TierListPost
+	db := r.db.
+		Preload("Post.Category").
+		Preload("CoverAsset").
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Joins("JOIN categories ON categories.id = posts.category_id").
+		Where("posts.type = ? AND posts.visibility = ?", "RANK", "PUBLIC").
+		Order("tier_list_posts.created_at desc")
+	if query != "" {
+		like := "%" + query + "%"
+		db = db.Where(
+			"LOWER(tier_list_posts.title) LIKE ? OR EXISTS (SELECT 1 FROM unnest(tier_list_posts.tags) tag WHERE LOWER(tag) LIKE ?) OR LOWER(categories.name) LIKE ? OR LOWER(categories.slug) LIKE ?",
+			like,
+			like,
+			like,
+			like,
+		)
+	}
+	if limit > 0 {
+		db = db.Limit(limit)
+	}
+	err := db.Find(&lists).Error
+	return lists, err
+}
+
 func (r *SearchRepository) Categories(query string) ([]models.Category, error) {
 	var categories []models.Category
 	db := r.db.Order("name asc")

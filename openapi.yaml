@@ -28,6 +28,11 @@ paths:
           required: false
           schema: { type: string }
           description: Opaque pagination cursor.
+        - name: category
+          in: query
+          required: false
+          schema: { type: string, default: all }
+          description: Optional category slug/name filter for rank posts.
         - name: includeAds
           in: query
           required: false
@@ -39,6 +44,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FrontendFeedResponse"
+  /search/overview:
+    get:
+      tags: [Search]
+      summary: Search users, categories, and ranking topics
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+  /search/trending:
+    get:
+      tags: [Search]
+      summary: Trending and user-created ranking topics
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string }
+          description: Optional text/category/tag filter.
+      responses:
+        "200":
+          description: Topic results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/TrendingTopic" }
   /feed/post/{id}/like:
     post:
       tags: [Feed]
@@ -247,6 +289,32 @@ components:
         createdAt: { type: string }
         isPublic: { type: boolean }
         participantCount: { type: integer }
+    TrendingTopic:
+      type: object
+      required: [id, title, category, coverImage, participantCount, tags]
+      properties:
+        id: { type: string }
+        postId: { type: string, nullable: true }
+        title: { type: string }
+        category: { type: string }
+        coverImage: { type: string }
+        participantCount: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+    SearchResponse:
+      type: object
+      required: [users, topics, categories]
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/FrontendUser" }
+        topics:
+          type: array
+          items: { $ref: "#/components/schemas/TrendingTopic" }
+        categories:
+          type: array
+          items: { $ref: "#/components/schemas/Category" }
     Category:
       type: object
       required: [id, slug, name]

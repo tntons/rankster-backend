@@ -135,16 +135,9 @@ func (s *RankPostService) CreateRank(user views.User, body views.CreateRankReque
 			return err
 		}
 
-		coverURL := rankCoverURL(body.Title)
-		asset := models.Asset{ID: "", URL: ""}
-		if err := tx.Where("url = ?", coverURL).First(&asset).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			asset = models.Asset{ID: generateUUID(), URL: coverURL, CreatedAt: now}
-			if err := tx.Create(&asset).Error; err != nil {
-				return err
-			}
+		asset, err := coverAssetForRequest(tx, body.Title, body.CoverImage, now)
+		if err != nil {
+			return err
 		}
 
 		postID = generateUUID()
@@ -250,16 +243,9 @@ func (s *RankPostService) UpdateRankPost(user views.User, postID string, body vi
 			return err
 		}
 
-		coverURL := rankCoverURL(body.Title)
-		asset := models.Asset{ID: "", URL: ""}
-		if err := tx.Where("url = ?", coverURL).First(&asset).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
-			asset = models.Asset{ID: generateUUID(), URL: coverURL, CreatedAt: now}
-			if err := tx.Create(&asset).Error; err != nil {
-				return err
-			}
+		asset, err := coverAssetForRequest(tx, body.Title, body.CoverImage, now)
+		if err != nil {
+			return err
 		}
 
 		visibility := list.Post.Visibility
@@ -376,6 +362,25 @@ func (s *RankPostService) DeleteRankPost(userID string, postID string) error {
 		return tx.Model(&models.UserStats{}).Where("user_id = ?", userID).
 			Update("ranks_created_count", gorm.Expr("GREATEST(ranks_created_count - 1, 0)")).Error
 	})
+}
+
+func coverAssetForRequest(tx *gorm.DB, title string, coverImage string, now time.Time) (models.Asset, error) {
+	coverURL := strings.TrimSpace(coverImage)
+	if coverURL == "" {
+		coverURL = rankCoverURL(title)
+	}
+
+	var asset models.Asset
+	if err := tx.Where("url = ?", coverURL).First(&asset).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return models.Asset{}, err
+		}
+		asset = models.Asset{ID: generateUUID(), URL: coverURL, CreatedAt: now}
+		if err := tx.Create(&asset).Error; err != nil {
+			return models.Asset{}, err
+		}
+	}
+	return asset, nil
 }
 
 func (s *RankPostService) CreateComment(user views.User, postID string, text string) (CreatedComment, error) {

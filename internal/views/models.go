@@ -223,6 +223,7 @@ type LeaderboardEntry struct {
 type CreateRankRequest struct {
 	Title        string     `json:"title"`
 	Category     string     `json:"category"`
+	CoverImage   string     `json:"coverImage"`
 	Description  string     `json:"description"`
 	Tags         []string   `json:"tags"`
 	Tiers        TierData   `json:"tiers"`

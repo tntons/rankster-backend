@@ -422,6 +422,7 @@ components:
       properties:
         title: { type: string }
         category: { type: string }
+        coverImage: { type: string, nullable: true }
         description: { type: string }
         tags:
           type: array

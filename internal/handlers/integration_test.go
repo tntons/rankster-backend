@@ -1024,8 +1024,9 @@ func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
 			Username string `json:"username"`
 		} `json:"user"`
 		Messages []struct {
-			Text string `json:"text"`
-			Mine bool   `json:"mine"`
+			Text      string `json:"text"`
+			Mine      bool   `json:"mine"`
+			Timestamp string `json:"timestamp"`
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -1033,6 +1034,9 @@ func TestMessagesThreadDetailReturnsConversation(t *testing.T) {
 	}
 	if response.ID == "" || response.User.Username == "" || len(response.Messages) == 0 {
 		t.Fatalf("unexpected thread detail payload: %+v", response)
+	}
+	if _, err := time.Parse(time.RFC3339, response.Messages[0].Timestamp); err != nil {
+		t.Fatalf("message timestamp is not RFC3339: %q: %v", response.Messages[0].Timestamp, err)
 	}
 }
 
@@ -1180,8 +1184,9 @@ func TestMessageThreadWebSocketSendsConversationEvent(t *testing.T) {
 	var event struct {
 		Type    string `json:"type"`
 		Message struct {
-			Text string `json:"text"`
-			Mine bool   `json:"mine"`
+			Text      string `json:"text"`
+			Mine      bool   `json:"mine"`
+			Timestamp string `json:"timestamp"`
 		} `json:"message"`
 	}
 	if err := socket.ReadJSON(&event); err != nil {
@@ -1189,6 +1194,9 @@ func TestMessageThreadWebSocketSendsConversationEvent(t *testing.T) {
 	}
 	if event.Type != "message" || event.Message.Text != "Realtime test message" || !event.Message.Mine {
 		t.Fatalf("unexpected message event: %+v", event)
+	}
+	if _, err := time.Parse(time.RFC3339, event.Message.Timestamp); err != nil {
+		t.Fatalf("websocket message timestamp is not RFC3339: %q: %v", event.Message.Timestamp, err)
 	}
 }
 

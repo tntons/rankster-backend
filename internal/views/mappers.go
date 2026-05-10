@@ -203,7 +203,7 @@ func BuildMessageThread(thread models.MessageThread) MessageThread {
 		ID:          thread.ID,
 		User:        BuildUser(thread.PeerUser),
 		LastMessage: lastMessage,
-		Timestamp:   RelativeTime(thread.UpdatedAt),
+		Timestamp:   WireTimestamp(thread.UpdatedAt),
 		Unread:      thread.UnreadCount,
 	}
 }
@@ -213,7 +213,7 @@ func BuildChatMessage(message models.DirectMessage, ownerUserID string) ChatMess
 		ID:        message.ID,
 		Text:      message.Body,
 		Mine:      message.SenderUserID == ownerUserID,
-		Timestamp: ChatTimestamp(message.CreatedAt),
+		Timestamp: WireTimestamp(message.CreatedAt),
 	}
 }
 
@@ -272,12 +272,12 @@ func BuildCategory(category models.Category) Category {
 	}
 }
 
-func NewChatMessage(id string, text string, mine bool) ChatMessage {
+func NewChatMessage(id string, text string, mine bool, createdAt time.Time) ChatMessage {
 	return ChatMessage{
 		ID:        id,
 		Text:      text,
 		Mine:      mine,
-		Timestamp: "Now",
+		Timestamp: WireTimestamp(createdAt),
 	}
 }
 
@@ -298,11 +298,11 @@ func RelativeTime(t time.Time) string {
 	return fmt.Sprintf("%dd ago", int(diff.Hours()/24))
 }
 
-func ChatTimestamp(t time.Time) string {
+func WireTimestamp(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("3:04 PM")
+	return t.UTC().Format(time.RFC3339)
 }
 
 func AssetOrFallback(asset *models.Asset, kind, slug string) string {

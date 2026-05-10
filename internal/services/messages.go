@@ -213,8 +213,8 @@ func (s *MessageService) CreateMessage(userID, threadID, text string) (views.Cre
 		recipientThread = &threadView
 	}
 
-	senderMessage := views.NewChatMessage(messageID, text, true)
-	recipientMessage := views.NewChatMessage(messageID, text, false)
+	senderMessage := views.NewChatMessage(messageID, text, true, now)
+	recipientMessage := views.NewChatMessage(messageID, text, false, now)
 
 	return views.CreatedMessage{
 		Sender:            senderMessage,

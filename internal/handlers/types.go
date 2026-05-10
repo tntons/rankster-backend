@@ -14,6 +14,7 @@ type tierItemView = views.TierItem
 type tierDataView = views.TierData
 type commentView = views.Comment
 type commentLikeResponse = views.CommentLikeResponse
+type postLikeResponse = views.PostLikeResponse
 type rankPostView = views.RankPost
 type messageThreadView = views.MessageThread
 type chatMessageView = views.ChatMessage

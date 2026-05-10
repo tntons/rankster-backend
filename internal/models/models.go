@@ -261,8 +261,8 @@ type CommentLike struct {
 
 type PostLike struct {
 	ID        string `gorm:"type:uuid;primaryKey"`
-	PostID    string `gorm:"type:uuid;index"`
-	UserID    string `gorm:"type:uuid;index"`
+	PostID    string `gorm:"type:uuid;index;uniqueIndex:idx_post_like_user"`
+	UserID    string `gorm:"type:uuid;index;uniqueIndex:idx_post_like_user"`
 	CreatedAt time.Time
 }
 

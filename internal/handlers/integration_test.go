@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"rankster-backend/internal/config"
+	"rankster-backend/internal/models"
 	"rankster-backend/internal/server"
 	"rankster-backend/internal/testutil"
 )
@@ -680,6 +681,193 @@ func TestPostCommentAppendsCommentToPost(t *testing.T) {
 	}
 	if likedComment.Likes != 0 || likedComment.IsLiked {
 		t.Fatalf("unexpected unliked comment response: %+v", likedComment)
+	}
+}
+
+func TestPostLikePersistsHydratesIsIdempotentUnlikesAndNotifies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	database := testutil.NewTestDatabase(t)
+	router := server.BuildRouter(database)
+	RegisterRoutes(router, database, testConfig())
+
+	ownerToken := mockLoginToken(t, router, "tierqueen")
+	likerToken := mockLoginToken(t, router, "me")
+
+	createBody := bytes.NewBufferString(`{
+		"title":"Backend Like Test Ranking",
+		"category":"anime",
+		"description":"Created by integration test",
+		"tags":["anime","backend"],
+		"tierRows":[
+			{"id":"S","label":"S","items":[{"id":"frieren","name":"Frieren"}]},
+			{"id":"A","label":"A","items":[{"id":"dungeon","name":"Dungeon Meshi"}]}
+		]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/rank/create", createBody)
+	req.Header.Set("Authorization", "Bearer "+ownerToken)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create rank status = %d, want %d; body=%s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created post: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatalf("created post missing id: %+v", created)
+	}
+
+	var owner models.User
+	if err := database.
+		Joins("JOIN user_profiles ON user_profiles.user_id = users.id").
+		Where("user_profiles.username = ?", "tierqueen").
+		First(&owner).Error; err != nil {
+		t.Fatalf("load owner: %v", err)
+	}
+
+	var initialNotificationCount int64
+	if err := database.Model(&models.Notification{}).Where("user_id = ?", owner.ID).Count(&initialNotificationCount).Error; err != nil {
+		t.Fatalf("count initial notifications: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/feed/post/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+likerToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("like post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var likedPost struct {
+		Likes   int  `json:"likes"`
+		IsLiked bool `json:"isLiked"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedPost); err != nil {
+		t.Fatalf("decode liked post: %v", err)
+	}
+	if likedPost.Likes != 1 || !likedPost.IsLiked {
+		t.Fatalf("unexpected liked post response: %+v", likedPost)
+	}
+
+	var likeRows int64
+	if err := database.Model(&models.PostLike{}).Where("post_id = ?", created.ID).Count(&likeRows).Error; err != nil {
+		t.Fatalf("count post likes: %v", err)
+	}
+	if likeRows != 1 {
+		t.Fatalf("post_likes rows = %d, want 1", likeRows)
+	}
+
+	var metrics models.PostMetrics
+	if err := database.Where("post_id = ?", created.ID).First(&metrics).Error; err != nil {
+		t.Fatalf("load post metrics: %v", err)
+	}
+	if metrics.LikeCount != 1 || metrics.HotScore != 1 {
+		t.Fatalf("metrics after like = %+v, want like_count=1 hot_score=1", metrics)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/post/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+likerToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("refresh post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var refreshed struct {
+		Likes   int  `json:"likes"`
+		IsLiked bool `json:"isLiked"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &refreshed); err != nil {
+		t.Fatalf("decode refreshed post: %v", err)
+	}
+	if refreshed.Likes != 1 || !refreshed.IsLiked {
+		t.Fatalf("post like was not hydrated after refresh: %+v", refreshed)
+	}
+
+	var notificationsAfterLike int64
+	if err := database.Model(&models.Notification{}).Where("user_id = ?", owner.ID).Count(&notificationsAfterLike).Error; err != nil {
+		t.Fatalf("count notifications after like: %v", err)
+	}
+	if notificationsAfterLike != initialNotificationCount+1 {
+		t.Fatalf("notification count after like = %d, want %d", notificationsAfterLike, initialNotificationCount+1)
+	}
+
+	var notification models.Notification
+	if err := database.
+		Where("user_id = ? AND type = ? AND action_href = ?", owner.ID, "like", "/topic/"+created.ID).
+		First(&notification).Error; err != nil {
+		t.Fatalf("load like notification: %v", err)
+	}
+	if notification.ActorUserID == nil || *notification.ActorUserID == owner.ID {
+		t.Fatalf("unexpected like notification actor: %+v", notification)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/feed/post/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+likerToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("second like post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedPost); err != nil {
+		t.Fatalf("decode second liked post: %v", err)
+	}
+	if likedPost.Likes != 1 || !likedPost.IsLiked {
+		t.Fatalf("post like should be idempotent, got %+v", likedPost)
+	}
+
+	if err := database.Model(&models.PostLike{}).Where("post_id = ?", created.ID).Count(&likeRows).Error; err != nil {
+		t.Fatalf("count post likes after idempotent like: %v", err)
+	}
+	if likeRows != 1 {
+		t.Fatalf("post_likes rows after idempotent like = %d, want 1", likeRows)
+	}
+	if err := database.Model(&models.Notification{}).Where("user_id = ?", owner.ID).Count(&notificationsAfterLike).Error; err != nil {
+		t.Fatalf("count notifications after idempotent like: %v", err)
+	}
+	if notificationsAfterLike != initialNotificationCount+1 {
+		t.Fatalf("notification count after idempotent like = %d, want %d", notificationsAfterLike, initialNotificationCount+1)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/feed/post/"+created.ID+"/like", nil)
+	req.Header.Set("Authorization", "Bearer "+likerToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("unlike post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &likedPost); err != nil {
+		t.Fatalf("decode unliked post: %v", err)
+	}
+	if likedPost.Likes != 0 || likedPost.IsLiked {
+		t.Fatalf("unexpected unliked post response: %+v", likedPost)
+	}
+
+	if err := database.Where("post_id = ?", created.ID).First(&metrics).Error; err != nil {
+		t.Fatalf("load post metrics after unlike: %v", err)
+	}
+	if metrics.LikeCount != 0 || metrics.HotScore != 0 {
+		t.Fatalf("metrics after unlike = %+v, want like_count=0 hot_score=0", metrics)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/feed/post/"+created.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+likerToken)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("refresh unliked post status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &refreshed); err != nil {
+		t.Fatalf("decode refreshed unliked post: %v", err)
+	}
+	if refreshed.Likes != 0 || refreshed.IsLiked {
+		t.Fatalf("post unlike was not hydrated after refresh: %+v", refreshed)
 	}
 }
 

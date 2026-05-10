@@ -47,6 +47,11 @@ type CommentLikeResponse struct {
 	IsLiked bool `json:"isLiked"`
 }
 
+type PostLikeResponse struct {
+	Likes   int  `json:"likes"`
+	IsLiked bool `json:"isLiked"`
+}
+
 type RankPost struct {
 	ID               string     `json:"id"`
 	User             User       `json:"user"`

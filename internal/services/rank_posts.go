@@ -28,6 +28,12 @@ type CreatedComment struct {
 	Notification            *views.Notification
 }
 
+type UpdatedPostLike struct {
+	Response                views.PostLikeResponse
+	NotificationRecipientID string
+	Notification            *views.Notification
+}
+
 func NewRankPostService(
 	db *gorm.DB,
 	tierLists *repositories.TierListRepository,
@@ -501,6 +507,108 @@ func (s *RankPostService) UpdateCommentLike(commentID string, userID string, lik
 		return nil
 	})
 	return response, err
+}
+
+func (s *RankPostService) UpdatePostLike(postID string, user views.User, liked bool) (UpdatedPostLike, error) {
+	now := time.Now()
+	var result UpdatedPostLike
+
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var post models.Post
+		if err := tx.
+			Preload("Creator.Profile").
+			Preload("Creator.Stats").
+			Where("id = ?", postID).
+			First(&post).Error; err != nil {
+			return err
+		}
+
+		var metrics models.PostMetrics
+		if err := tx.Where("post_id = ?", postID).First(&metrics).Error; err != nil {
+			return err
+		}
+
+		var existing models.PostLike
+		err := tx.Where("post_id = ? AND user_id = ?", postID, user.ID).First(&existing).Error
+		if liked {
+			if err == nil {
+				result.Response = views.PostLikeResponse{Likes: metrics.LikeCount, IsLiked: true}
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+
+			if err := tx.Create(&models.PostLike{
+				ID:        generateUUID(),
+				PostID:    postID,
+				UserID:    user.ID,
+				CreatedAt: now,
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&models.PostMetrics{}).
+				Where("post_id = ?", postID).
+				Updates(map[string]any{
+					"like_count": gorm.Expr("like_count + ?", 1),
+					"hot_score":  gorm.Expr("hot_score + ?", 1.0),
+					"updated_at": now,
+				}).Error; err != nil {
+				return err
+			}
+			metrics.LikeCount++
+			result.Response = views.PostLikeResponse{Likes: metrics.LikeCount, IsLiked: true}
+
+			if post.CreatorID != user.ID && s.notifications != nil {
+				result.NotificationRecipientID = post.CreatorID
+				notification, err := s.notifications.Create(
+					tx,
+					post.CreatorID,
+					&user.ID,
+					"like",
+					"New like",
+					fmt.Sprintf("%s liked your ranking.", user.DisplayName),
+					"/topic/"+postID,
+					now,
+				)
+				if err != nil {
+					return err
+				}
+				result.Notification = notification
+			}
+			return nil
+		}
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			result.Response = views.PostLikeResponse{Likes: metrics.LikeCount, IsLiked: false}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		deleteResult := tx.Where("post_id = ? AND user_id = ?", postID, user.ID).Delete(&models.PostLike{})
+		if deleteResult.Error != nil {
+			return deleteResult.Error
+		}
+		if deleteResult.RowsAffected > 0 {
+			if err := tx.Model(&models.PostMetrics{}).
+				Where("post_id = ?", postID).
+				Updates(map[string]any{
+					"like_count": gorm.Expr("GREATEST(like_count - 1, 0)"),
+					"hot_score":  gorm.Expr("GREATEST(hot_score - ?, 0)", 1.0),
+					"updated_at": now,
+				}).Error; err != nil {
+				return err
+			}
+			if metrics.LikeCount > 0 {
+				metrics.LikeCount--
+			}
+		}
+		result.Response = views.PostLikeResponse{Likes: metrics.LikeCount, IsLiked: false}
+		return nil
+	})
+	return result, err
 }
 
 func (s *RankPostService) UserStats(userID string) (ComputedUserStats, error) {

@@ -131,6 +131,14 @@ func (h *Handler) UnlikeComment(c *gin.Context) {
 	h.setCommentLike(c, false)
 }
 
+func (h *Handler) LikePost(c *gin.Context) {
+	h.setPostLike(c, true)
+}
+
+func (h *Handler) UnlikePost(c *gin.Context) {
+	h.setPostLike(c, false)
+}
+
 func (h *Handler) CreateRank(c *gin.Context) {
 	if !h.ensureDB(c) {
 		return
@@ -232,6 +240,38 @@ func (h *Handler) setCommentLike(c *gin.Context, liked bool) {
 
 func (h *Handler) updateCommentLike(commentID string, userID string, liked bool) (commentLikeResponse, error) {
 	return h.rankPostService.UpdateCommentLike(commentID, userID, liked)
+}
+
+func (h *Handler) setPostLike(c *gin.Context, liked bool) {
+	if !h.ensureDB(c) {
+		return
+	}
+
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+
+	response, notificationRecipientID, notification, err := h.updatePostLike(c.Param("id"), user, liked)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"code": "POST_NOT_FOUND", "message": "post not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"code": "INTERNAL_ERROR", "message": "failed to update post like"})
+		return
+	}
+
+	if notification != nil {
+		h.broadcastNotification(notificationRecipientID, *notification)
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) updatePostLike(postID string, user userView, liked bool) (postLikeResponse, string, *notificationView, error) {
+	result, err := h.rankPostService.UpdatePostLike(postID, user, liked)
+	return result.Response, result.NotificationRecipientID, result.Notification, err
 }
 
 type computedUserStats = services.ComputedUserStats

@@ -815,36 +815,14 @@ func upsertFrontendPost(tx *gorm.DB, baseURL string, now time.Time, seed fronten
 
 	metrics := models.PostMetrics{
 		PostID:       postID,
-		LikeCount:    seed.Likes,
-		CommentCount: len(seed.Comments),
-		ShareCount:   seed.Shares,
-		HotScore:     float64(seed.Likes)/1000 + float64(seed.Shares)/100 + float64(seed.ParticipantCount)/10000,
+		LikeCount:    0,
+		CommentCount: 0,
+		ShareCount:   0,
+		HotScore:     0,
 		UpdatedAt:    createdAt,
 	}
 	if err := tx.Create(&metrics).Error; err != nil {
 		return err
-	}
-
-	for _, username := range seed.LikedBy {
-		like := models.PostLike{ID: uuid.NewString(), PostID: postID, UserID: userIDs[username], CreatedAt: createdAt}
-		if err := tx.Create(&like).Error; err != nil {
-			return err
-		}
-	}
-
-	for _, commentSeed := range seed.Comments {
-		comment := models.Comment{
-			ID:        uuid.NewString(),
-			PostID:    postID,
-			AuthorID:  userIDs[commentSeed.Username],
-			Body:      commentSeed.Text,
-			LikeCount: commentSeed.Likes,
-			CreatedAt: now.Add(-commentSeed.Age),
-			UpdatedAt: now.Add(-commentSeed.Age),
-		}
-		if err := tx.Create(&comment).Error; err != nil {
-			return err
-		}
 	}
 
 	return nil

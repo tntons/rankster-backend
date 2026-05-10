@@ -86,6 +86,7 @@ func EnsureDatabase(database *gorm.DB, publicBaseURL string) error {
 const (
 	fixRankParticipantCountsMigrationID = "20260510_fix_rank_participant_counts_from_item_count"
 	backfillRankTopicsMigrationID       = "20260510_backfill_rank_topics"
+	removeFrontendDemoEngagementID      = "20260511_remove_frontend_demo_engagement"
 )
 
 func runDataMigrations(database *gorm.DB) error {
@@ -96,6 +97,7 @@ func runDataMigrations(database *gorm.DB) error {
 		}{
 			{fixRankParticipantCountsMigrationID, fixRankParticipantCountsFromItemCounts},
 			{backfillRankTopicsMigrationID, backfillRankTopics},
+			{removeFrontendDemoEngagementID, removeFrontendDemoEngagement},
 		}
 
 		for _, migration := range migrations {
@@ -226,6 +228,148 @@ func backfillRankTopics(tx *gorm.DB) error {
 
 func normalizedTopicTitle(title string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(title))), " ")
+}
+
+type frontendDemoPostKey struct {
+	username string
+	title    string
+}
+
+type frontendDemoSeededComment struct {
+	frontendDemoPostKey
+	commentUsername string
+	body            string
+}
+
+var frontendDemoEngagementPostKeys = []frontendDemoPostKey{
+	{username: "animequeen", title: "Best Anime of Winter 2025"},
+	{username: "tierqueen", title: "Pizza Toppings Definitive Ranking"},
+	{username: "rankmaster99", title: "NBA Players 2024-25 Season"},
+	{username: "drip_scholar", title: "2024 Hip-Hop Albums"},
+	{username: "tierqueen", title: "Best Video Games of 2024"},
+	{username: "me", title: "Albums I Had On Repeat In 2024"},
+	{username: "me", title: "Games I Couldn't Stop Playing In 2024"},
+}
+
+var frontendDemoSeededComments = []frontendDemoSeededComment{
+	{frontendDemoPostKey: frontendDemoPostKey{username: "animequeen", title: "Best Anime of Winter 2025"}, commentUsername: "tierqueen", body: "Sakamoto Days in D is criminal"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "animequeen", title: "Best Anime of Winter 2025"}, commentUsername: "rankmaster99", body: "Finally someone who appreciates Blue Box!"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "tierqueen", title: "Pizza Toppings Definitive Ranking"}, commentUsername: "drip_scholar", body: "Pineapple supremacy!! D tier is wrong"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "tierqueen", title: "Pizza Toppings Definitive Ranking"}, commentUsername: "rankmaster99", body: "Finally! A correct pizza tier list."},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "rankmaster99", title: "NBA Players 2024-25 Season"}, commentUsername: "animequeen", body: "Curry in C is absolutely disrespectful"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "tierqueen", title: "Best Video Games of 2024"}, commentUsername: "rankmaster99", body: "Balatro S tier is absolutely based"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "me", title: "Albums I Had On Repeat In 2024"}, commentUsername: "tierqueen", body: "Charm in A tier is so real"},
+	{frontendDemoPostKey: frontendDemoPostKey{username: "me", title: "Games I Couldn't Stop Playing In 2024"}, commentUsername: "rankmaster99", body: "Balatro at S is the only truth"},
+}
+
+var frontendDemoUsernames = []string{"animequeen", "tierqueen", "rankmaster99", "drip_scholar", "me"}
+
+func removeFrontendDemoEngagement(tx *gorm.DB) error {
+	postIDsByKey := map[frontendDemoPostKey]string{}
+	postIDs := make([]string, 0, len(frontendDemoEngagementPostKeys))
+
+	for _, key := range frontendDemoEngagementPostKeys {
+		postID, err := frontendDemoPostID(tx, key)
+		if err != nil {
+			return err
+		}
+		if postID == "" {
+			continue
+		}
+		postIDsByKey[key] = postID
+		postIDs = append(postIDs, postID)
+	}
+	if len(postIDs) == 0 {
+		return nil
+	}
+
+	if err := removeSeededDemoComments(tx, postIDsByKey); err != nil {
+		return err
+	}
+
+	demoUserIDs := tx.Model(&models.UserProfile{}).
+		Select("user_id").
+		Where("username IN ?", frontendDemoUsernames)
+	if err := tx.Where("post_id IN ? AND user_id IN (?)", postIDs, demoUserIDs).
+		Delete(&models.PostLike{}).Error; err != nil {
+		return err
+	}
+
+	for _, postID := range postIDs {
+		if err := refreshPostMetricCounts(tx, postID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func frontendDemoPostID(tx *gorm.DB, key frontendDemoPostKey) (string, error) {
+	var list models.TierListPost
+	err := tx.Model(&models.TierListPost{}).
+		Joins("JOIN posts ON posts.id = tier_list_posts.post_id").
+		Joins("JOIN user_profiles ON user_profiles.user_id = posts.creator_id").
+		Where("user_profiles.username = ? AND tier_list_posts.title = ?", key.username, key.title).
+		First(&list).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return list.PostID, nil
+}
+
+func removeSeededDemoComments(tx *gorm.DB, postIDsByKey map[frontendDemoPostKey]string) error {
+	for _, seed := range frontendDemoSeededComments {
+		postID := postIDsByKey[seed.frontendDemoPostKey]
+		if postID == "" {
+			continue
+		}
+
+		commentIDsForLikes := tx.Model(&models.Comment{}).
+			Select("comments.id").
+			Joins("JOIN user_profiles ON user_profiles.user_id = comments.author_id").
+			Where("comments.post_id = ? AND user_profiles.username = ? AND comments.body = ?", postID, seed.commentUsername, seed.body)
+		if err := tx.Where("comment_id IN (?)", commentIDsForLikes).
+			Delete(&models.CommentLike{}).Error; err != nil {
+			return err
+		}
+		commentIDsForDelete := tx.Model(&models.Comment{}).
+			Select("comments.id").
+			Joins("JOIN user_profiles ON user_profiles.user_id = comments.author_id").
+			Where("comments.post_id = ? AND user_profiles.username = ? AND comments.body = ?", postID, seed.commentUsername, seed.body)
+		if err := tx.Where("id IN (?)", commentIDsForDelete).
+			Delete(&models.Comment{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func refreshPostMetricCounts(tx *gorm.DB, postID string) error {
+	var likes int64
+	if err := tx.Model(&models.PostLike{}).Where("post_id = ?", postID).Count(&likes).Error; err != nil {
+		return err
+	}
+	var comments int64
+	if err := tx.Model(&models.Comment{}).Where("post_id = ?", postID).Count(&comments).Error; err != nil {
+		return err
+	}
+	var shares int64
+	if err := tx.Model(&models.PostShare{}).Where("post_id = ?", postID).Count(&shares).Error; err != nil {
+		return err
+	}
+
+	hotScore := float64(likes) + float64(comments)*1.5 + float64(shares)*2
+	return tx.Model(&models.PostMetrics{}).
+		Where("post_id = ?", postID).
+		Updates(map[string]any{
+			"like_count":    likes,
+			"comment_count": comments,
+			"share_count":   shares,
+			"hot_score":     hotScore,
+			"updated_at":    time.Now(),
+		}).Error
 }
 
 func ensureLocalDevAssetURLs(database *gorm.DB, publicBaseURL string) error {

@@ -156,7 +156,7 @@ func TestProfileMeReturnsUserAndRankings(t *testing.T) {
 	if response.User.Username != "me" {
 		t.Fatalf("expected current db user, got %q", response.User.Username)
 	}
-	if len(response.LikedPosts) == 0 || response.Stats.TotalLikes == 0 || len(response.FavoriteCategories) == 0 {
+	if len(response.Rankings) == 0 || len(response.FavoriteCategories) == 0 {
 		t.Fatalf("expected rich profile payload, got %+v", response)
 	}
 }
